@@ -1,0 +1,32 @@
+# Generated builds and caches
+artifacts/
+**/bin/
+**/obj/
+__pycache__/
+*.py[cod]
+.venv*/
+.vs/
+*.user
+*.suo
+# Local dependencies, test host, credentials and generated media
+.local/
+.env
+.env.*
+!.env.example
+*.log
+*.etl
+*.db
+*.db-*
+*.sqlite*
+test-credentials.json
+production-trial-backups/
+# No real media or server distributions in the source tree
+*.mp4
+*.mkv
+*.avi
+*.m2ts
+*.ts
+*.exe
+*.dll
+*.pdb
+*.zip

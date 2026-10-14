@@ -1,0 +1,55 @@
+{
+  "schema": 1,
+  "sdk": {
+    "version": "9.0.318",
+    "platform": "win-x64",
+    "file": "dotnet-sdk-9.0.318-win-x64.zip",
+    "url": "https://builds.dotnet.microsoft.com/dotnet/Sdk/9.0.318/dotnet-sdk-9.0.318-win-x64.zip",
+    "sha512": "d961a84ebcbc316f06c98d16958422f7bb1b3a1f29b5d6011cabf59984390690ff669c3dd9b739554ad00771d6393dbbde6bdb14da81faa7fe499f59501864b6",
+    "checksumSource": "https://builds.dotnet.microsoft.com/dotnet/release-metadata/9.0/releases.json"
+  },
+  "jellyfin": {
+    "version": "10.11.11",
+    "abi": "10.11.11.0",
+    "file": "jellyfin_10.11.11-amd64.zip",
+    "url": "https://sgp1.mirror.jellyfin.org/files/server/windows/stable/v10.11.11/amd64/jellyfin_10.11.11-amd64.zip",
+    "origin": "https://repo.jellyfin.org/files/server/windows/stable/v10.11.11/amd64/jellyfin_10.11.11-amd64.zip",
+    "sha256": "3b5d3e904415ac6bd2c0ee9fe93235b4145d41c4c85ae782d244ac9767f77374",
+    "sha256Source": "Project observation of official HTTPS download; not an upstream signature",
+    "md5": "e4e95b8cf496001551b5c8daf50414d9",
+    "md5Source": "https://repo.jellyfin.org/?path=/server/windows/stable/v10.11.11/amd64",
+    "size": 167773527,
+    "references": {
+      "Emby.Naming.dll": {
+        "assemblyVersion": "10.11.11.0",
+        "sha256": "67481f4f86ec127638e719f111b2a74865507e8c3144ff6e1f3e367ebf1e1a67",
+        "license": "GPL-3.0-only"
+      },
+      "Jellyfin.Data.dll": {
+        "assemblyVersion": "10.11.11.0",
+        "sha256": "d144c74efa0784a21967172bc5902f4a18be0649f34bc24141c55917f234f995",
+        "license": "GPL-3.0-only"
+      },
+      "MediaBrowser.Common.dll": {
+        "assemblyVersion": "10.11.11.0",
+        "sha256": "011da4f92ee674b3657cb77959acf760666081af7803947525139a4ca3889cfd",
+        "license": "GPL-3.0-only"
+      },
+      "MediaBrowser.Controller.dll": {
+        "assemblyVersion": "10.11.11.0",
+        "sha256": "4722d62de8878c3b4b7fe17c7c3495c294702e9eda0ff87977db96fa54ff307c",
+        "license": "GPL-3.0-only"
+      },
+      "MediaBrowser.Model.dll": {
+        "assemblyVersion": "10.11.11.0",
+        "sha256": "4e93870eeef02faec0ac1a014103f46c9dcb9316812066cc8fb82a0d9236bc67",
+        "license": "GPL-3.0-only"
+      },
+      "Jellyfin.Extensions.dll": {
+        "assemblyVersion": "10.11.11.0",
+        "sha256": "a87ce811a69e083d03c7aa101cc12b21ac2508c211462979d9a8522253d0b72b",
+        "license": "GPL-3.0-only"
+      }
+    }
+  }
+}

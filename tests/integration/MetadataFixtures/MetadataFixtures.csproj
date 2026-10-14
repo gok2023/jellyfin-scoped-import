@@ -1,0 +1,7 @@
+<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><TargetFramework>net9.0</TargetFramework><ImplicitUsings>enable</ImplicitUsings><Nullable>enable</Nullable><AssemblyVersion>0.0.1.0</AssemblyVersion></PropertyGroup><PropertyGroup><JellyfinReferenceDir Condition="'$(JellyfinReferenceDir)' == ''">$(MSBuildThisFileDirectory)../../../.local/jellyfin/server</JellyfinReferenceDir></PropertyGroup><ItemGroup>
+<FrameworkReference Include="Microsoft.AspNetCore.App" />
+<Reference Include="MediaBrowser.Common"><HintPath>$(JellyfinReferenceDir)/MediaBrowser.Common.dll</HintPath><Private>false</Private></Reference>
+<Reference Include="MediaBrowser.Controller"><HintPath>$(JellyfinReferenceDir)/MediaBrowser.Controller.dll</HintPath><Private>false</Private></Reference>
+<Reference Include="MediaBrowser.Model"><HintPath>$(JellyfinReferenceDir)/MediaBrowser.Model.dll</HintPath><Private>false</Private></Reference>
+<Reference Include="Jellyfin.Data"><HintPath>$(JellyfinReferenceDir)/Jellyfin.Data.dll</HintPath><Private>false</Private></Reference>
+</ItemGroup></Project>

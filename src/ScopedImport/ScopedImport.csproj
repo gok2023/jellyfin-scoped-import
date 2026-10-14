@@ -1,0 +1,28 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net9.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AssemblyVersion>0.2.0.0</AssemblyVersion>
+    <FileVersion>0.2.0.0</FileVersion>
+    <Version>0.2.0</Version>
+    <PackageLicenseExpression>GPL-3.0-only</PackageLicenseExpression>
+    <RepositoryUrl>https://github.com/gok2023/jellyfin-scoped-import</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <RootNamespace>ScopedImport</RootNamespace>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+  </PropertyGroup>
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+    <Reference Include="Emby.Naming"><HintPath>$(JellyfinReferenceDir)/Emby.Naming.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="MediaBrowser.Common"><HintPath>$(JellyfinReferenceDir)/MediaBrowser.Common.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="MediaBrowser.Controller"><HintPath>$(JellyfinReferenceDir)/MediaBrowser.Controller.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="MediaBrowser.Model"><HintPath>$(JellyfinReferenceDir)/MediaBrowser.Model.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="Jellyfin.Data"><HintPath>$(JellyfinReferenceDir)/Jellyfin.Data.dll</HintPath><Private>false</Private></Reference>
+    <EmbeddedResource Include="import.html" LogicalName="ScopedImport.import.html" />
+    <EmbeddedResource Include="app.html" LogicalName="ScopedImport.app.html" />
+  </ItemGroup>
+  <Target Name="RequireLockedReferences" BeforeTargets="ResolveAssemblyReferences">
+    <Error Condition="!Exists('$(JellyfinReferenceDir)/MediaBrowser.Controller.dll')" Text="Run scripts/bootstrap.ps1 to acquire locked Jellyfin 10.11.11 references." />
+  </Target>
+</Project>

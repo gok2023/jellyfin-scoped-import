@@ -1,0 +1,5 @@
+<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><OutputType>Exe</OutputType><TargetFramework>net9.0</TargetFramework><ImplicitUsings>enable</ImplicitUsings><Nullable>enable</Nullable></PropertyGroup><PropertyGroup><JellyfinReferenceDir Condition="'$(JellyfinReferenceDir)' == ''">$(MSBuildThisFileDirectory)../../../.local/jellyfin/server</JellyfinReferenceDir></PropertyGroup><ItemGroup>
+<Compile Include="../../../src/ScopedImport/EpisodeLayout.cs" Link="EpisodeLayout.cs" />
+<Reference Include="Emby.Naming"><HintPath>$(JellyfinReferenceDir)/Emby.Naming.dll</HintPath></Reference>
+<Reference Include="Jellyfin.Extensions"><HintPath>$(JellyfinReferenceDir)/Jellyfin.Extensions.dll</HintPath></Reference>
+</ItemGroup></Project>

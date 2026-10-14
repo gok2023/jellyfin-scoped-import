@@ -1,0 +1,75 @@
+# 当前技术状态
+
+更新：2026-10-14。阶段：作者已授权私有仓库初始化；本地main已初始化；CLI账号gok2023认证有效，空Private远程已创建并预检通过，正在执行首次Commit/Push。目标：[gok2023/jellyfin-scoped-import](https://github.com/gok2023/jellyfin-scoped-import)。未创建正式Release，未部署或访问生产。
+
+## 版本、许可与维护范围
+
+正式源码在 src/ScopedImport；插件程序集0.2.0.0，GUID 347d2c09-78a1-4697-9c3d-e23566122144。仅支持Windows / 原版Jellyfin10.11.11.0 ABI及BaseItemRepository。
+
+作者决定采用 **GPL-3.0-only**，见LICENSE及THIRD_PARTY_NOTICES。不得把未知来源素材声明为作者原创；历史贡献/摘录记录不完整，未发现具体授权冲突，来源确认仍为待办。如发现实质冲突暂停相应分发。第三方版权和各自许可保留，不被本项目许可替换。
+
+维护源码、脚本、测试、工具、文档及根构建配置；当前版本不是永久上限，未来升级按AGENTS验证并同步版本、依赖、文档。旧工程只作为私有回退资料，不是构建依赖，不做修改。
+
+## 架构
+
+```mermaid
+flowchart TD
+  UI[app.html / import.html] --> API[Plugin.cs：管理员API]
+  API --> Job[Importer：后台单任务]
+  Job --> Plan[校验路径/库映射并枚举目标子树]
+  Plan --> Layout[EpisodeLayout：季集解析]
+  Layout --> New[跳过已有项，准备缺失条目]
+  New --> Meta[NFO / 按库远程元数据 / 媒体探测]
+  Meta --> Save[共享锁 + ILibraryManager.CreateItem]
+  Save --> Guard[RepositoryGuard：DI仓储追加代理]
+  Guard --> Persist[Jellyfin持久化服务]
+  Save --> Streams[新视频媒体流保存]
+  Job --> Status[OperationId状态查询]
+  Status --> UI
+```
+
+插件运行在Jellyfin内，无Python常驻助手。Python/Node仅作测试工具；媒体探测由宿主编码器驱动，可能启动ffprobe。App允许匿名取页面，入库/库信息/状态/审计API要求管理员。FetchMetadata优先，保留FetchTmdb兼容；202只代表排队，操作状态在内存中，重启丢失。
+
+## 安全边界和技术决策
+
+- 已初始化movies/tvshows库；完整本地Windows路径。拒绝库根、UNC、越界、链接/重解析点及歧义布局。
+- 单片电影目录一个主视频；剧集支持NFO、SxxEyy、E01子目录。无季号按第一季，但已有其他季的歧义会拒绝。ISO/STRM/光盘/复杂多版不支持。
+- 只处理新对象的元数据，不走完整刷新、远程海报或演员创建。既有项按路径/类型/父级核对并跳过，部分成功不自动回滚；重试不自动修补已创建项。
+- 枚举深度8、10000项、120秒；任务15分钟、探测60秒、提供器30秒为软时限。
+- 标准Updated通知可能回溯父级，完整刷新会改旧项；“先查不存在再CreateItem”仍有upsert竞争。当前共享仓储锁/追加上下文复查替代盲目创建；不直接写数据库。
+- 代理不是系统沙箱或数据库唯一约束；第三方绕过仓储/替换服务、合法后台扫描和不响应取消的I/O不受完整约束。无全进程I/O证明。
+- 客户端0.1.1和某条0.1错误提示为保留的历史标识，不是程序集版本。App静态提示现已区分历史隔离验证与新工程离线验证；没有改变页面脚本或入库逻辑。
+
+## 工程与构建
+
+- 仅迁移七项正式文件和当前有效测试。四业务C#未变；HTML仅占位路径脱敏和必要验证说明；csproj仅工程引用/版本/许可/仓库元数据调整。
+- 排除旧助手、规划/探针工程、旧安装器、生产备份/数据库/日志、研究快照。必要公共测试工具抽为tests/integration/support/lab.py。
+- global.json锁SDK9.0.318；dependencies.lock.json锁官方归档、项目SHA256、上游MD5及六参考DLL摘要/ABI。SDK使用官方SHA512。Jellyfin归档SHA256是项目记录，不是上游签名认证。
+- Directory.Build.props仅用本项目.local参考路径，PathMap脱敏PE调试路径。NuGet.Config清空包源（无PackageReference），不读取旧工程DLL。
+- bootstrap只校验/提取依赖，不启动宿主；build用唯一输出目录、ArtifactCheck验证版本/资源/ABI/调试路径，再离线测试和白名单打包。
+- 当前ZIP白名单：正式DLL、meta.json、README、CHANGELOG、THIRD_PARTY_NOTICES、LICENSE、SHA256SUMS；没有SDK/宿主/凭据/数据库/测试插件。本轮不创建Release。
+- 构建清单记录许可、来源待办、源/依赖/包哈希及测试范围，位于忽略的artifacts目录。
+
+## 已完成验证与未完成项
+
+工程迁移和首次提交前终审分别完成35项安全离线检查：14命名、8登录、2配置选择、11隔离门禁。编译0警告/0错误；MetadataFixtures仅编译未装载。原0.2历史记录的隔离入库/远程TMDb/重启结果及0.1实盘用户反馈不是当前新工程重新执行的证据。
+
+终审实际Git枚举37项原源码候选，12项忽略探针均通过；未发现真实凭据、私人路径或私有产物。新许可证加入后，应在首次提交前重新核对38项暂存清单。本轮许可/静态文案/打包变更后再次通过35项离线检查，编译0警告0错误；候选ZIP仅含7项正式插件/文档/许可内容。为使克隆源码与验收工作树一致，文本统一LF，不改业务逻辑。
+
+真实基础/v02/远程/重启集成尚未运行：缺独立宿主bootstrap、FFmpeg和可证明隔离的前态。全进程I/O及实际第三方组合尚未验收。正式生产加载版本未知且本轮不查。
+
+## GitHub初始化记录
+
+- 目标：gok2023/jellyfin-scoped-import，必须Private，不覆盖既有仓库。
+- 本地分支：main；Git提交身份已配置（不记录姓名/邮箱）。
+- CLI：官方便携版2.102.0，位于.local，归档SHA256核验通过；账号gok2023已认证。CLI确认目标不存在后创建空Private仓库，仓库名称/Private/空状态已核实。
+- 暂存：38项明确源码白名单，敏感路径扫描0命中，12项忽略探针全部通过；origin已设置为指定HTTPS地址。首次Commit/Push前已重新通过CLI账号、空Private仓库及origin预检。
+- 首次提交标题：chore: 初始化 ScopedImport 正式插件工程。
+- 首次提交SHA：待成功提交后登记；登记文件无法包含它自身所在首次提交的哈希，成功后以单独状态记录提交同步。
+- 首次Push后验证Private、本地/远程main一致及远程文件清单；禁止Public、正式Release和生产部署。
+
+## 下一步与文档维护
+
+本轮完成授权的私有初始化后停止。继续补历史贡献来源、实现严格隔离宿主引导和真实集成/重启验证，再补系统I/O证据；不得把离线通过写成完整集成通过。
+
+README服务用户；AGENTS规范开发；本文是唯一技术状态入口；CHANGELOG只记版本变化，不新增重复STATUS/TODO/SESSION。下一任务先读README和本文，按具体模块读取源码。

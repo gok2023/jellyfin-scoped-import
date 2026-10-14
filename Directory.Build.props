@@ -1,0 +1,9 @@
+<Project>
+  <PropertyGroup>
+    <JellyfinReferenceDir>$(MSBuildThisFileDirectory).local/jellyfin/server</JellyfinReferenceDir>
+    <Deterministic>true</Deterministic>
+    <PathMap>$(MSBuildThisFileDirectory)=/_/</PathMap>
+    <ContinuousIntegrationBuild>true</ContinuousIntegrationBuild>
+    <DebugType>portable</DebugType>
+  </PropertyGroup>
+</Project>
