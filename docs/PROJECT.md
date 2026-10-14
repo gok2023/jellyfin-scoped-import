@@ -1,6 +1,6 @@
 # 当前技术状态
 
-更新：2026-10-14。阶段：旧工程已按授权退役，正式工程为唯一活跃开发项目；旧根仅保留生产备份原件。退役验收状态通过本次文档收尾提交同步至现有GitHub私有main。目标：[gok2023/jellyfin-scoped-import](https://github.com/gok2023/jellyfin-scoped-import)。未创建正式Release，未部署或访问生产。
+更新：2026-10-14。阶段：旧工程已按授权退役，正式工程为唯一活跃开发项目；旧根仅保留生产备份原件。退役验收状态已提交，现阶段按用户授权发布最终工程版v0.2.0.0至现有GitHub私有仓库。目标：[gok2023/jellyfin-scoped-import](https://github.com/gok2023/jellyfin-scoped-import)。首次Private Release见下方发布记录，未部署或访问生产。
 
 ## 版本、许可与维护范围
 
@@ -47,7 +47,7 @@ flowchart TD
 - global.json锁SDK9.0.318；dependencies.lock.json锁官方归档、项目SHA256、上游MD5及六参考DLL摘要/ABI。SDK使用官方SHA512。Jellyfin归档SHA256是项目记录，不是上游签名认证。
 - Directory.Build.props仅用本项目.local参考路径，PathMap脱敏PE调试路径。NuGet.Config清空包源（无PackageReference），不读取旧工程DLL。
 - bootstrap只校验/提取依赖，不启动宿主；build用唯一输出目录、ArtifactCheck验证版本/资源/ABI/调试路径，再离线测试和白名单打包。
-- 当前ZIP白名单：正式DLL、meta.json、README、CHANGELOG、THIRD_PARTY_NOTICES、LICENSE、SHA256SUMS；没有SDK/宿主/凭据/数据库/测试插件。本轮不创建Release。
+- 当前ZIP白名单：正式DLL、meta.json、README、CHANGELOG、THIRD_PARTY_NOTICES、LICENSE、SHA256SUMS；没有SDK/宿主/凭据/数据库/测试插件；本轮授权发布该白名单安装包。
 - 构建清单记录许可、来源待办、源/依赖/包哈希及测试范围，位于忽略的artifacts目录。
 
 ## 已完成验证与未完成项
@@ -66,7 +66,7 @@ flowchart TD
 - 暂存：38项明确源码白名单，敏感路径扫描0命中，12项忽略探针全部通过；origin已设置为指定HTTPS地址。首次Commit/Push前已重新通过CLI账号、空Private仓库及origin预检。
 - 首次提交标题：chore: 初始化 ScopedImport 正式插件工程。
 - 首次提交SHA：4b6037828f0e1b65e05c7f0f3133745753ec52be；对应插件0.2.0.0，含用户指定的标题和八项提交说明。本状态记录以单独文档提交同步，不自引用其自身SHA。
-- 首次Push验收：Private、main、首次本地/远程SHA一致，38项远程文件清单/哈希匹配；README、LICENSE、AGENTS和PROJECT存在，无私有数据或外部依赖。状态记录同步后已核验main一致及工作树清洁，最终提交SHA通过Git查询，避免文档自引用哈希。禁止Public、正式Release和生产部署。
+- 首次Push验收：Private、main、首次本地/远程SHA一致，38项远程文件清单/哈希匹配；README、LICENSE、AGENTS和PROJECT存在，无私有数据或外部依赖。状态记录同步后已核验main一致及工作树清洁，最终提交SHA通过Git查询，避免文档自引用哈希。初始化阶段未创建Release；仓库保持Private、禁止生产部署，后续Release授权与结果见发布记录。
 
 ## 旧工程退役与本轮验证
 
@@ -76,14 +76,24 @@ flowchart TD
 
 新工程仅删除.local/downloads中SDK9.0.318 ZIP缓存，官方固定URL可用、SHA512与锁文件一致；现有SDK、六参考DLL、CLI、Git历史和候选包均保留。ZIP仅bootstrap使用，当前build/test/package不读取它；再次执行bootstrap会按锁文件重新下载SDK归档。
 
-清理之后独立build.ps1再次通过，0警告/0错误，35项安全离线检查通过（14命名、8登录、2配置、11隔离门禁）。MetadataFixtures只编译；真实集成/重启仍未验证。本轮候选目录artifacts/build-ab46b3376cc9487fbc03a705ea5d17df，ZIP通过版本/资源/ABI和7项白名单检查。业务代码未改；退役执行阶段没有提交或推送Git，本次收尾仅提交本文。
+清理之后独立build.ps1再次通过，0警告/0错误，35项安全离线检查通过（14命名、8登录、2配置、11隔离门禁）。MetadataFixtures只编译；真实集成/重启仍未验证。退役验收当时的候选目录为artifacts/build-ab46b3376cc9487fbc03a705ea5d17df（发布收尾后已由下方最终目录替代），ZIP通过版本/资源/ABI和7项白名单检查。业务代码未改；退役执行阶段没有提交或推送Git，本次收尾仅提交本文。
 
 退役验收时，旧工程文件分配空间从1,587.13MiB降至463.18MiB，回收1,123.95MiB；新工程SDK ZIP缓存回收284.38MiB。扣除本轮构建与文档增量，两处D盘工程净减少1,476,271,000字节（约1.3749GiB），新工程剩余958.49MiB。前一低风险清理阶段另回收61.55MiB，不重复计入本次退役量。上述为NTFS文件分配空间，不含目录/MFT元数据；C盘私有归档另占空间，同盘复制本身不释放D盘空间。
 
 未来完全删除旧根的唯一剩余文件范围是生产备份；必须获得单独明确批准，先评估恢复验证和离机副本。本轮到此停止。
 
+## v0.2.0.0 最终工程版发布
+
+用户已授权发布Release及清理旧构建产物；仓库继续Private，不部署生产。发布标签v0.2.0.0，对应当前发布文档提交及相同七项正式源码；具体提交SHA以Git标签查询为准，不自引用。本轮只调整README、CHANGELOG、第三方分发说明和当前状态，不修改业务代码/版本/GUID。
+
+Release：https://github.com/gok2023/jellyfin-scoped-import/releases/tag/v0.2.0.0。资产仅ScopedImport-0.2.0.0-jf10.11.11.zip及同名.sha256；GitHub自动提供该标签源码归档，接收者必须能访问同一私有标签源码。GPL-3.0-only、版权声明和历史来源不确定性继续保留，未发现具体授权冲突。
+
+发布前重新独立构建并执行35项安全离线检查（14命名、8登录、2配置、11隔离门禁），0警告/0错误；包白名单7项，校验版本/GUID/资源/ABI及对应源码摘要。MetadataFixtures仅编译；真实集成、重启和全进程I/O仍未验证，不因创建正式Release而提升验证结论。
+
+本地仅保留artifacts/ScopedImport-0.2.0.0：安装ZIP、外部SHA256文件、构建清单，以及可直接复制的ScopedImport_0.2.0.0目录（DLL和meta）。其他build-*输出在最终包核验及远程附件下载SHA256复核通过后清理。SDK、六参考DLL、CLI、源码/Git、私有历史归档和生产备份均保留。远程Release从Draft完成附件核验后发布为非Prerelease，并设为Latest；不覆盖既有版本。
+
 ## 下一步与文档维护
 
-首次私有源码初始化、旧工程退役和离线验收已完成；本次仅提交并同步退役状态文档，到此停止。继续补历史贡献来源、实现严格隔离宿主引导和真实集成/重启验证，再补系统I/O证据；不得把离线通过写成完整集成通过。
+首次私有源码初始化、旧工程退役和离线验收已完成；本次发布最终工程版Private Release并精简本地重复构建产物，到此停止。继续补历史贡献来源、实现严格隔离宿主引导和真实集成/重启验证，再补系统I/O证据；不得把离线通过写成完整集成通过。
 
 README服务用户；AGENTS规范开发；本文是唯一技术状态入口；CHANGELOG只记版本变化，不新增重复STATUS/TODO/SESSION。下一任务先读README和本文，按具体模块读取源码。

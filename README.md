@@ -6,10 +6,10 @@
 
 ## 安装与使用
 
-本项目采用 **GPL-3.0-only**，见 [LICENSE](LICENSE)。第三方声明及历史来源不确定性见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。当前构建包用于审阅，尚未创建正式 Release。
+本项目采用 **GPL-3.0-only**，见 [LICENSE](LICENSE)。第三方声明及历史来源不确定性见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。最终工程版 [v0.2.0.0 Release](https://github.com/gok2023/jellyfin-scoped-import/releases/tag/v0.2.0.0) 提供安装 ZIP 和 SHA256 校验文件。仓库仍为 Private，仅授权协作者可访问；已通过35项安全离线检查，真实集成/重启验证尚未完成。
 
 1. 完全停止 Jellyfin，并保留自己的数据与原插件备份。
-2. 解压经校验的发布包，将 `ScopedImport_0.2.0.0` 放到该实例数据目录的 `plugins` 下。升级时把其他 ScopedImport 版本移出插件目录，避免同时加载。不要复制测试插件或参考程序集。
+2. 从上述 Release 下载 `ScopedImport-0.2.0.0-jf10.11.11.zip` 和同名 `.sha256`，用 PowerShell 的 `Get-FileHash -Algorithm SHA256` 核对摘要，再解压发布包，将 `ScopedImport_0.2.0.0` 放到该实例数据目录的 `plugins` 下。升级时把其他 ScopedImport 版本移出插件目录，避免同时加载。不要复制测试插件或参考程序集。
 3. 启动 Jellyfin，在管理菜单打开“定向入库”，或访问服务器地址下的 `/ScopedImport/App`。用 Jellyfin 管理员账户登录；不要直接打开本地 HTML 文件。
 4. 输入服务器可访问的完整目录或视频路径，选择“按媒体库设置获取元数据”或“仅本地 NFO”，提交一次并等待结果。
 5. HTTP 202 表示排队，只有操作结果能说明完成、拒绝或部分完成。不要在状态未知时重复提交。
