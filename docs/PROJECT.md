@@ -1,6 +1,6 @@
 # 当前技术状态
 
-更新：2026-10-14。阶段：GitHub私有仓库初始化、首次Commit和Push已成功；远程文件验收通过，正在同步本状态记录。目标：[gok2023/jellyfin-scoped-import](https://github.com/gok2023/jellyfin-scoped-import)。未创建正式Release，未部署或访问生产。
+更新：2026-10-14。阶段：GitHub私有仓库初始化、首次Commit和Push已成功；远程文件及Private验收已完成，本状态记录随文档提交保存在私有main。目标：[gok2023/jellyfin-scoped-import](https://github.com/gok2023/jellyfin-scoped-import)。未创建正式Release，未部署或访问生产。
 
 ## 版本、许可与维护范围
 
@@ -66,10 +66,10 @@ flowchart TD
 - 暂存：38项明确源码白名单，敏感路径扫描0命中，12项忽略探针全部通过；origin已设置为指定HTTPS地址。首次Commit/Push前已重新通过CLI账号、空Private仓库及origin预检。
 - 首次提交标题：chore: 初始化 ScopedImport 正式插件工程。
 - 首次提交SHA：4b6037828f0e1b65e05c7f0f3133745753ec52be；对应插件0.2.0.0，含用户指定的标题和八项提交说明。本状态记录以单独文档提交同步，不自引用其自身SHA。
-- 首次Push验收：Private、main、首次本地/远程SHA一致，38项远程文件清单/哈希匹配；README、LICENSE、AGENTS和PROJECT存在，无私有数据或外部依赖。状态记录提交后再次核验最终main一致及工作树清洁。禁止Public、正式Release和生产部署。
+- 首次Push验收：Private、main、首次本地/远程SHA一致，38项远程文件清单/哈希匹配；README、LICENSE、AGENTS和PROJECT存在，无私有数据或外部依赖。状态记录同步后已核验main一致及工作树清洁，最终提交SHA通过Git查询，避免文档自引用哈希。禁止Public、正式Release和生产部署。
 
 ## 下一步与文档维护
 
-本轮已完成授权的私有源码初始化，状态记录同步和最终Git核验后停止。继续补历史贡献来源、实现严格隔离宿主引导和真实集成/重启验证，再补系统I/O证据；不得把离线通过写成完整集成通过。
+本轮已完成授权的私有源码初始化，已完成状态记录同步和最终Git核验，到此停止。继续补历史贡献来源、实现严格隔离宿主引导和真实集成/重启验证，再补系统I/O证据；不得把离线通过写成完整集成通过。
 
 README服务用户；AGENTS规范开发；本文是唯一技术状态入口；CHANGELOG只记版本变化，不新增重复STATUS/TODO/SESSION。下一任务先读README和本文，按具体模块读取源码。
