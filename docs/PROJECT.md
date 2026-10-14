@@ -1,6 +1,6 @@
 # 当前技术状态
 
-更新：2026-10-14。阶段：正式工程为唯一活跃开发项目；当前仓库仍为 Private，本轮已获用户明确授权，安全、权属及文档门禁全部通过后直接改为 Public。目标：[gok2023/jellyfin-scoped-import](https://github.com/gok2023/jellyfin-scoped-import)。已有私有阶段发布的 v0.2.0.0 Release；本轮不创建或替换 Release/附件，不部署或访问生产。公开结果将在完成后另行记录。
+更新：2026-10-14。阶段：正式工程为唯一活跃开发项目；当前仓库为 **Public**：本轮按用户明确授权，在安全、权属及文档门禁通过后经已认证GitHub CLI直接公开。目标：[gok2023/jellyfin-scoped-import](https://github.com/gok2023/jellyfin-scoped-import)。已有私有阶段发布的 v0.2.0.0 Release；本轮不创建新Release或替换附件，仅同步既有Release说明的当前可见性，不部署或访问生产。公开及匿名访问已验证，结果见本文末尾。
 
 ## 版本、许可与维护范围
 
@@ -98,7 +98,7 @@ Release：https://github.com/gok2023/jellyfin-scoped-import/releases/tag/v0.2.0.
 
 README服务用户；AGENTS规范开发；本文是唯一技术状态入口；CHANGELOG只记版本变化，不新增重复STATUS/TODO/SESSION。下一任务先读README和本文，按具体模块读取源码。
 
-## 本轮公开准备（2026-10-14）
+## 本轮正式公开与验收（2026-10-14）
 
 私有历史归档现为仓库外私有备份，位置不在公开文档中记录。本轮不读取、迁移或上传其内容，不修改旧工程、生产数据或媒体目录。历史Private初始化/Release事实保留，公开不会提升插件测试等级。
 
@@ -111,3 +111,11 @@ README服务用户；AGENTS规范开发；本文是唯一技术状态入口；CH
 远程仅main和一个标签；无PR、Actions附件、Wiki、Pages或Fork。既有Release为非Draft、非Prerelease的v0.2.0.0，附件仅安装ZIP及.sha256；API下载ZIP的SHA256与GitHub附件摘要和本地旧包一致，实际七项内容已核查。源码38项实际跟踪清单通过，19项忽略探针全部通过；本地Markdown链接和公开上游链接有效，Private仓库链接已认证核实，公开后另行匿名复验。
 
 本轮文档修改后的build.ps1完整通过：编译0警告/0错误，35项安全离线检查通过，ArtifactCheck及ABI、版本/GUID/嵌入资源/调试路径与七项包白名单通过。候选包在artifacts/build-80fc2472c32c4ffe94b3af74a686c52a/，未上传；MetadataFixtures仅编译。git diff --check通过，修改仅README、PROJECT、CHANGELOG及第三方分发说明，无业务源码变更。没有访问生产服务、数据库、媒体挂载或私有归档。
+
+公开完成：GitHub CLI确认gok2023/jellyfin-scoped-import为Public；GPL-3.0-only保持不变。本轮公开文档提交SHA为af6e6b46f2be2e5fb82a94ac84f154b33e94e266，已与远程main逐项核实。普通Git HTTPS推送受连接重置阻塞，改用已认证CLI Git Data API同步四个blob、tree及commit，所得SHA与本地完全相同，非强制更新main；没有历史重写。最终状态记录另作中文文档提交，其SHA不在本文自引用。
+
+未携带认证信息的公开HTTP访问：首页、README、LICENSE、Plugin.cs、PROJECT、Releases列表及v0.2.0.0页面全部200；三个raw文档字节与本地一致，公开API确认private=false，远程完整38个blob哈希与本地HEAD一致。所有Markdown本地路径及外部文档/许可链接均有效。
+
+既有正式Release仍为v0.2.0.0（非Draft/非Prerelease），仅原安装ZIP和.sha256两个附件，ID和SHA256均未改变。本轮只更新既有Release说明，将Private明确作为历史并链接当前README；没有新建Stable/Pre-release、改标签或上传文件。历史ZIP内说明不替换，当前状态已在main及Release页面解释。
+
+真实集成、远程元数据、重启、全进程I/O及第三方组合验证仍未完成；下一步先完成隔离宿主与独立验收、补历史来源，再决定后续正式发布计划。本轮源码公开与用户文档完善到此完成，不部署生产。
