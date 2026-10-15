@@ -29,8 +29,14 @@ public sealed class Operation(Guid id)
     public List<string> EnumeratedDirectories { get; } = [];
     public List<string> ReadFiles { get; } = [];
     public List<string> Warnings { get; } = [];
-    public List<object> MetadataProviders { get; } = [];
+    public List<ProviderAttempt> MetadataProviders { get; } = [];
+    public List<object> Movies { get; } = [];
+    internal Dictionary<string, XDocument?> NfoDocuments { get; } = new(StringComparer.OrdinalIgnoreCase);
+    internal bool Finished { get; set; }
+
 }
+
+public sealed record ProviderAttempt(Guid ItemId, string Type, string Provider, string Outcome);
 
 internal sealed record Pending(BaseItem Item, Folder Parent, string? Nfo, string? Cover, Series? Series, Season? Season);
 
@@ -59,15 +65,15 @@ public sealed class Importer(ILibraryManager library, IItemRepository repository
             {
                 lock (op) { op.State = op.Created.Count == 0 ? "Rejected" : "Partial"; op.Message = ex.Message; }
             }
-            finally { gate.Release(); }
+            finally { lock (op) { op.NfoDocuments.Clear(); gate.Release(); op.Finished = true; } }
         });
         return new { OperationId = op.Id };
     }
     public object? Status(Guid id)
     {
         if (!operations.TryGetValue(id, out var op)) return null;
-        lock (op) return new { op.Id, op.State, op.Message, Created = op.Created.ToArray(), Skipped = op.Skipped.ToArray(),
-            EnumeratedDirectories = op.EnumeratedDirectories.ToArray(), ReadFiles = op.ReadFiles.ToArray(), Warnings = op.Warnings.ToArray(), MetadataProviders = op.MetadataProviders.ToArray() };
+        lock (op) return new { op.Id, State = !op.Finished && op.State is ("Completed" or "Rejected" or "Partial") ? "Finishing" : op.State, op.Message, Created = op.Created.ToArray(), Skipped = op.Skipped.ToArray(),
+            EnumeratedDirectories = op.EnumeratedDirectories.ToArray(), ReadFiles = op.ReadFiles.ToArray(), Warnings = op.Warnings.ToArray(), MetadataProviders = op.MetadataProviders.ToArray(), Movies = op.Movies.ToArray() };
     }
     private static void State(Operation op, string state, string message) { lock (op) { op.State = state; op.Message = message; } }
 
@@ -140,7 +146,9 @@ public sealed class Importer(ILibraryManager library, IItemRepository repository
             {
                 if (existing is not T typed) throw new IOException("已有条目类型冲突，已保留：" + path);
                 if (typed.ParentId != parent.Id || typed.IsVirtualItem) throw new IOException("已有条目父级或虚拟状态冲突，已保留：" + path);
-                planned[path] = typed; lock (op) op.Skipped.Add(path); return typed;
+                planned[path] = typed;
+                lock (op) { op.Skipped.Add(path); if (typed is Movie) MovieResult(op, typed, "ExistingSkipped", "ExistingSkipped"); }
+                return typed;
             }
             var item = factory(); item.Path = path; item.Id = library.GetNewItemId(path, item.GetType()); item.SetParent(parent);
             item.DateCreated = DateTime.UtcNow; item.DateModified = File.GetLastWriteTimeUtc(path);
@@ -152,7 +160,10 @@ public sealed class Importer(ILibraryManager library, IItemRepository repository
             if (!Same(Path.GetDirectoryName(movieDir)!, root) || videos.Length != 1 || !Same(Path.GetDirectoryName(videos[0])!, movieDir))
                 throw new IOException("电影必须是媒体库下的独立单片目录，且只包含一个主视频；多版本/混合目录暂不支持");
             var video = videos[0];
-            Use(video, () => new Movie { Name = Path.GetFileName(movieDir), VideoType = VideoType.VideoFile }, physicalRoot,
+            var parsed = Emby.Naming.Video.VideoResolver.CleanDateTime(Path.GetFileName(movieDir), naming);
+            var movieName = Emby.Naming.Video.VideoResolver.TryCleanString(parsed.Name, naming, out var cleanName) ? cleanName : parsed.Name;
+            Use(video, () => new Movie { Name = string.IsNullOrWhiteSpace(movieName) ? Path.GetFileName(movieDir) : movieName,
+                ProductionYear = parsed.Year, VideoType = VideoType.VideoFile }, physicalRoot,
                 Existing(Path.ChangeExtension(video, ".nfo"), Path.Combine(movieDir, "movie.nfo")), Existing(Path.Combine(movieDir, "poster.jpg"), Path.Combine(movieDir, "folder.jpg")));
         }
         else
@@ -213,12 +224,14 @@ public sealed class Importer(ILibraryManager library, IItemRepository repository
         }
         State(op, "Metadata", "仅获取新条目的元数据和媒体信息");
         var probeResults = new Dictionary<Guid, MediaInfo>();
+        var metadataResults = new Dictionary<Guid, string>();
         foreach (var entry in pending)
         {
             ct.ThrowIfCancellationRequested();
             var item = entry.Item;
-            if (entry.Nfo is not null) ApplyNfo(item, entry.Nfo, op);
-            if (request.ShouldFetchMetadata) await FetchMetadata(entry, options, op, ct);
+            var localTitle = entry.Nfo is not null && ApplyNfo(item, entry.Nfo, op);
+            metadataResults[item.Id] = request.ShouldFetchMetadata
+                ? await FetchMetadata(entry, options, op, ct, localTitle) : "LocalOnly";
             if (entry.Cover is not null)
             {
                 Check(entry.Cover);
@@ -254,7 +267,11 @@ public sealed class Importer(ILibraryManager library, IItemRepository repository
                 }
                 item.PresentationUniqueKey = item.CreatePresentationUniqueKey();
                 using (RepositoryGuard.AppendScope([item.Id])) library.CreateItem(item, entry.Parent);
-                lock (op) op.Created.Add(new { item.Id, Type = item.GetType().Name, item.Path, item.Name, item.ParentId });
+                lock (op)
+                {
+                    op.Created.Add(new { item.Id, Type = item.GetType().Name, item.Path, item.Name, item.ParentId });
+                    if (item is Movie) MovieResult(op, item, "Created", metadataResults[item.Id]);
+                }
                 // Only this operation's freshly created ID, while holding the gate.
                 if (probeResults.TryGetValue(item.Id, out var info)) streams.SaveMediaStreams(item.Id, info.MediaStreams, ct);
             }
@@ -262,62 +279,142 @@ public sealed class Importer(ILibraryManager library, IItemRepository repository
         State(op, "Completed", pending.Count == 0 ? "目标条目已存在，未刷新或修改" : $"已追加 {pending.Count} 个条目；未请求媒体库扫描或祖先刷新");
     }
 
-    private static string? Existing(params string[] paths) => paths.FirstOrDefault(File.Exists);
-    private static XDocument ReadNfo(string path, Operation op)
+    private static string? Existing(params string[] paths)
     {
-        Check(path);
-        if (new FileInfo(path).Length > 2_000_000) throw new IOException("NFO 超过 2MB 上限");
-        lock (op) op.ReadFiles.Add(path);
-        using var reader = XmlReader.Create(path, new XmlReaderSettings { DtdProcessing = DtdProcessing.Prohibit, XmlResolver = null, MaxCharactersInDocument = 2_000_000 });
-        return XDocument.Load(reader);
+        foreach (var path in paths)
+        {
+            try { if (!Check(path).HasFlag(FileAttributes.Directory)) return path; }
+            catch (FileNotFoundException) { }
+            catch (DirectoryNotFoundException) { }
+        }
+        return null;
     }
-    private static int? NfoNumber(string? path, string field, Operation op) => path is not null && int.TryParse(ReadNfo(path, op).Root?.Element(field)?.Value, out var number) ? number : null;
-    private static void ApplyNfo(BaseItem item, string path, Operation op)
+    private static void MovieResult(Operation op, BaseItem item, string entryState, string metadataStatus) =>
+        op.Movies.Add(new { ItemId = item.Id, item.Name, item.Path, EntryState = entryState, MetadataStatus = metadataStatus,
+            FullMetadataRefresh = false, ManualIdentification = "打开电影详情后点击更多菜单中的“刮削元数据”，输入名称、年份或提供器 ID；使用 Jellyfin Web 管理员登录。" });
+
+    // Content failures alone may degrade. Path/access/size/DTD errors escape to the job boundary.
+    internal static XDocument? ReadNfo(string path, Operation op)
     {
-        var root = ReadNfo(path, op).Root ?? throw new IOException("NFO 无根节点");
-        if (!string.IsNullOrWhiteSpace(root.Element("title")?.Value)) item.Name = root.Element("title")!.Value;
+        if (op.NfoDocuments.TryGetValue(path, out var cached)) return cached;
+        Check(path);
+        const int limit = 2_000_000;
+        using var file = File.OpenRead(path);
+        if (file.Length > limit) throw new NfoSafetyException("NFO 超过 2MB 上限");
+        var bytes = new byte[limit + 1];
+        var length = 0;
+        while (length < bytes.Length)
+        {
+            var read = file.Read(bytes, length, bytes.Length - length);
+            if (read == 0) break;
+            length += read;
+        }
+        if (length > limit) throw new NfoSafetyException("NFO 超过 2MB 上限");
+        lock (op) op.ReadFiles.Add(path);
+        // Decode with BOM detection, also supporting XML's BOM-less UTF-16/32 signatures.
+        var encoding = length >= 4 && bytes[0] == 0 && bytes[1] == 0 && bytes[2] == 0 ? new System.Text.UTF32Encoding(true, true)
+            : length >= 4 && bytes[1] == 0 && bytes[2] == 0 && bytes[3] == 0 ? System.Text.Encoding.UTF32
+            : length >= 4 && bytes[0] == 0 && bytes[2] == 0 ? System.Text.Encoding.BigEndianUnicode
+            : length >= 4 && bytes[1] == 0 && bytes[3] == 0 ? System.Text.Encoding.Unicode
+            : System.Text.Encoding.UTF8;
+        // XmlReader handles the XML encoding declaration; this preliminary read is only a DTD guard.
+        using var content = new StreamReader(new MemoryStream(bytes, 0, length), encoding, true);
+        var text = content.ReadToEnd();
+        if (HasDoctype(text)) throw new NfoSafetyException("NFO 含禁止的 DTD/外部实体声明，已停止");
+        XDocument? document = null;
+        try
+        {
+            using var reader = XmlReader.Create(new MemoryStream(bytes, 0, length), new XmlReaderSettings
+                { DtdProcessing = DtdProcessing.Prohibit, XmlResolver = null, MaxCharactersInDocument = limit });
+            document = XDocument.Load(reader);
+        }
+        catch (XmlException)
+        { lock (op) op.Warnings.Add("NFO 为空、非 XML 或内容损坏，已忽略其元数据并继续基础入库：" + path); }
+        op.NfoDocuments[path] = document;
+        return document;
+    }
+    private static bool HasDoctype(string text)
+    {
+        for (var index = 0; index < text.Length; index++)
+        {
+            var rest = text.AsSpan(index);
+            // Literal text inside comments, CDATA and processing instructions is not a declaration.
+            var end = rest.StartsWith("<!--", StringComparison.Ordinal) ? "-->"
+                : rest.StartsWith("<![CDATA[", StringComparison.Ordinal) ? "]]>"
+                : rest.StartsWith("<?", StringComparison.Ordinal) ? "?>" : null;
+            if (end is not null)
+            {
+                var closing = text.IndexOf(end, index + 2, StringComparison.Ordinal);
+                if (closing < 0) return false; // Malformed content is handled by XmlReader.
+                index = closing + end.Length - 1;
+            }
+            else if (rest.StartsWith("<!DOCTYPE", StringComparison.Ordinal)) return true;
+        }
+        return false;
+    }
+    private static XElement? NfoRoot(string path, string expected, Operation op)
+    {
+        var root = ReadNfo(path, op)?.Root;
+        if (root is null) return null;
+        if (root.Name == expected) return root;
+        var warning = "NFO 根类型不受支持（需要 " + expected + "），已忽略并继续基础入库：" + path;
+        lock (op) { if (!op.Warnings.Contains(warning)) op.Warnings.Add(warning); }
+        return null;
+    }
+    internal static int? NfoNumber(string? path, string field, Operation op) => path is not null && int.TryParse(NfoRoot(path, "episodedetails", op)?.Element(field)?.Value, out var number) ? number : null;
+    internal static bool ApplyNfo(BaseItem item, string path, Operation op)
+    {
+        var expected = item switch { Movie => "movie", Series => "tvshow", Season => "season", _ => "episodedetails" };
+        var root = NfoRoot(path, expected, op);
+        if (root is null) return false;
+        var title = root.Element("title")?.Value;
+        if (!string.IsNullOrWhiteSpace(title)) item.Name = title;
         item.Overview = root.Element("plot")?.Value;
-        if (int.TryParse(root.Element("year")?.Value, out var year)) item.ProductionYear = year;
+        if (int.TryParse(root.Element("year")?.Value, out var year) && year > 0 && year <= 9999) item.ProductionYear = year;
         foreach (var id in root.Elements("uniqueid"))
         {
             var type = id.Attribute("type")?.Value.ToLowerInvariant();
-            if (type is "tmdb" or "imdb" or "tvdb") item.ProviderIds[type == "tmdb" ? "Tmdb" : type == "imdb" ? "Imdb" : "Tvdb"] = id.Value;
+            if (type is "tmdb" or "imdb" or "tvdb" && !string.IsNullOrWhiteSpace(id.Value)) item.ProviderIds[type == "tmdb" ? "Tmdb" : type == "imdb" ? "Imdb" : "Tvdb"] = id.Value.Trim();
         }
         foreach (var (tag, provider) in new[] { ("tmdbid", "Tmdb"), ("imdbid", "Imdb"), ("tvdbid", "Tvdb") })
-            if (!string.IsNullOrWhiteSpace(root.Element(tag)?.Value)) item.ProviderIds[provider] = root.Element(tag)!.Value;
+            if (!string.IsNullOrWhiteSpace(root.Element(tag)?.Value)) item.ProviderIds[provider] = root.Element(tag)!.Value.Trim();
+        return !string.IsNullOrWhiteSpace(title);
     }
 
-    private async Task FetchMetadata(Pending entry, LibraryOptions options, Operation op, CancellationToken ct)
+    private async Task<string> FetchMetadata(Pending entry, LibraryOptions options, Operation op, CancellationToken ct, bool localTitle)
     {
-        try
+        var item = entry.Item;
+        ItemLookupInfo info = item switch { Movie => new MovieInfo(), Series => new SeriesInfo(), Season => new SeasonInfo(), _ => new EpisodeInfo() };
+        info.Name = item.Name; info.Path = item.Path; info.ProviderIds = new(item.ProviderIds); info.Year = item.ProductionYear;
+        info.MetadataLanguage = options.PreferredMetadataLanguage ?? configuration.Configuration.PreferredMetadataLanguage;
+        info.MetadataCountryCode = options.MetadataCountryCode ?? configuration.Configuration.MetadataCountryCode;
+        info.IndexNumber = item.IndexNumber; info.ParentIndexNumber = item.ParentIndexNumber;
+        if (info is SeasonInfo si) { si.SeriesProviderIds = new(entry.Series!.ProviderIds); si.SeriesDisplayOrder = entry.Series.DisplayOrder; }
+        if (info is EpisodeInfo ei) { ei.SeriesProviderIds = new(entry.Series!.ProviderIds); ei.SeasonProviderIds = new(entry.Season!.ProviderIds); ei.SeriesDisplayOrder = entry.Series.DisplayOrder; }
+        var before = op.MetadataProviders.Count;
+        BaseItem? remote = item switch
         {
-            var item = entry.Item;
-            ItemLookupInfo info = item switch { Movie => new MovieInfo(), Series => new SeriesInfo(), Season => new SeasonInfo(), _ => new EpisodeInfo() };
-            info.Name = item.Name; info.Path = item.Path; info.ProviderIds = new(item.ProviderIds); info.Year = item.ProductionYear;
-            info.MetadataLanguage = options.PreferredMetadataLanguage ?? configuration.Configuration.PreferredMetadataLanguage;
-            info.MetadataCountryCode = options.MetadataCountryCode ?? configuration.Configuration.MetadataCountryCode;
-            info.IndexNumber = item.IndexNumber; info.ParentIndexNumber = item.ParentIndexNumber;
-            if (info is SeasonInfo si) { si.SeriesProviderIds = new(entry.Series!.ProviderIds); si.SeriesDisplayOrder = entry.Series.DisplayOrder; }
-            if (info is EpisodeInfo ei) { ei.SeriesProviderIds = new(entry.Series!.ProviderIds); ei.SeasonProviderIds = new(entry.Season!.ProviderIds); ei.SeriesDisplayOrder = entry.Series.DisplayOrder; }
-            BaseItem? remote = item switch
-            {
-                Movie m => await Get(m, (MovieInfo)info, options, op, ct),
-                Series s => await Get(s, (SeriesInfo)info, options, op, ct),
-                Season s => await Get(s, (SeasonInfo)info, options, op, ct),
-                Episode e => await Get(e, (EpisodeInfo)info, options, op, ct), _ => null
-            };
-            if (remote is null) { lock (op) op.Warnings.Add("媒体库启用的远程刮削器未返回元数据：" + item.Name); return; }
-            // Never pass a persisted item to a metadata service or merge into an ancestor.
-            if ((entry.Nfo is null || string.IsNullOrWhiteSpace(ReadNfo(entry.Nfo, op).Root?.Element("title")?.Value))
-                && !string.IsNullOrEmpty(remote.Name)) item.Name = remote.Name;
-            item.Overview ??= remote.Overview; item.ProductionYear ??= remote.ProductionYear;
-            item.PremiereDate ??= remote.PremiereDate; item.OfficialRating ??= remote.OfficialRating;
-            item.CommunityRating ??= remote.CommunityRating; item.OriginalTitle ??= remote.OriginalTitle;
-            item.Genres = remote.Genres; item.Studios = remote.Studios;
-            foreach (var id in remote.ProviderIds) item.ProviderIds.TryAdd(id.Key, id.Value);
+            Movie m => await Get(m, (MovieInfo)info, options, op, ct),
+            Series s => await Get(s, (SeriesInfo)info, options, op, ct),
+            Season s => await Get(s, (SeasonInfo)info, options, op, ct),
+            Episode e => await Get(e, (EpisodeInfo)info, options, op, ct), _ => null
+        };
+        if (remote is null)
+        {
+            lock (op) op.Warnings.Add("未获取远程元数据，请手动识别：" + item.Name);
+            var attempts = op.MetadataProviders.Skip(before).ToArray();
+            return attempts.Length == 0 ? "ProvidersUnavailable" : attempts.Any(x => x.Outcome == "Timeout") ? "ProviderTimeout"
+                : attempts.Any(x => x.Outcome == "Error") ? "ProviderFailed" : "NoMatch";
         }
-        catch (Exception ex) when (ex is not OutOfMemoryException)
-        { lock (op) op.Warnings.Add("元数据未完成，保留本地识别结果：" + entry.Item.Name + "（" + ex.GetType().Name + "）"); }
+        // Never pass a persisted item to a metadata service or merge into an ancestor.
+        if (!localTitle
+            && !string.IsNullOrEmpty(remote.Name)) item.Name = remote.Name;
+        if (string.IsNullOrWhiteSpace(item.Overview)) item.Overview = remote.Overview; item.ProductionYear ??= remote.ProductionYear;
+        item.PremiereDate ??= remote.PremiereDate; item.OfficialRating ??= remote.OfficialRating;
+        item.CommunityRating ??= remote.CommunityRating; item.OriginalTitle ??= remote.OriginalTitle;
+        item.Genres = remote.Genres; item.Studios = remote.Studios;
+        foreach (var id in remote.ProviderIds) item.ProviderIds.TryAdd(id.Key, id.Value);
+        return "FetchedFields";
     }
     private async Task<BaseItem?> Get<T, TInfo>(T item, TInfo info, LibraryOptions options, Operation op, CancellationToken ct)
         where T : BaseItem, IHasLookupInfo<TInfo>, new() where TInfo : ItemLookupInfo, new()
@@ -338,6 +435,7 @@ public sealed class Importer(ILibraryManager library, IItemRepository repository
                 // Do not abandon a provider task: an uncooperative provider must
                 // not overlap the next provider or keep running after item creation.
                 var result = await provider.GetMetadata(info, timeout.Token);
+                timeout.Token.ThrowIfCancellationRequested();
                 outcome = result.HasMetadata && result.Item is not null ? "Metadata" : "NoMetadata";
                 if (result.HasMetadata && result.Item is { } data)
                 {
@@ -346,12 +444,13 @@ public sealed class Importer(ILibraryManager library, IItemRepository repository
                     foreach (var id in merged.ProviderIds) info.ProviderIds.TryAdd(id.Key, id.Value);
                 }
             }
-            catch (Exception ex) when (ex is not OutOfMemoryException && !ct.IsCancellationRequested)
+            catch (Exception ex) when (ex is not (OutOfMemoryException or UnauthorizedAccessException or System.Security.SecurityException
+                or RepositoryProtectionException or NfoSafetyException) && !ct.IsCancellationRequested)
             {
-                outcome = ex is OperationCanceledException ? "Timeout" : "Error";
+                outcome = ex is OperationCanceledException or TimeoutException ? "Timeout" : "Error";
                 lock (op) op.Warnings.Add(provider.Name + " 未完成：" + item.Name + "（" + ex.GetType().Name + "）；继续下一提供器。");
             }
-            lock (op) op.MetadataProviders.Add(new { ItemId = item.Id, Type = typeof(T).Name, Provider = provider.Name, Outcome = outcome });
+            lock (op) op.MetadataProviders.Add(new ProviderAttempt(item.Id, typeof(T).Name, provider.Name, outcome));
         }
         return merged;
     }
@@ -368,3 +467,5 @@ public sealed class Importer(ILibraryManager library, IItemRepository repository
         foreach (var id in source.ProviderIds) target.ProviderIds.TryAdd(id.Key, id.Value);
     }
 }
+
+internal sealed class NfoSafetyException(string message) : IOException(message);

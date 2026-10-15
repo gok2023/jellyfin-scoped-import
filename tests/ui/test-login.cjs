@@ -11,18 +11,19 @@ async function run(responses,href='http://127.0.0.1:8096/ScopedImport/App'){
  return {elements,requests};
 }
 (async()=>{
- let r=await run([{body:{AccessToken:'mock-token'}},{body:{Ready:true}}]);
+ let r=await run([{body:{AccessToken:'mock-token',ServerId:'fixture-server'}},{body:{Ready:true}}]);
  assert.equal(r.elements.connection.textContent,'已连接，追加保护已启用。');
  assert.equal(r.requests[1].headers['X-Emby-Token'],'mock-token');
+ assert.match(r.requests[1].headers.Authorization,/Version="0\.2\.0\.1"/);
  assert.equal(JSON.parse(r.requests[0].body).Username,'admin');
  assert.equal(JSON.parse(r.requests[0].body).Pw,'mock password');
  assert.equal(r.elements.password.value,'');
  r=await run([{status:401,body:{}}]);assert.match(r.elements.connection.textContent,/身份认证失败.*401/);
- r=await run([{body:{AccessToken:'mock-token'}},{status:403,body:{}}]);assert.match(r.elements.connection.textContent,/插件权限和就绪检查失败.*403/);
+ r=await run([{body:{AccessToken:'mock-token',ServerId:'fixture-server'}},{status:403,body:{}}]);assert.match(r.elements.connection.textContent,/插件权限和就绪检查失败.*403/);
  r=await run([{body:{}}]);assert.match(r.elements.connection.textContent,/认证响应缺少令牌/);
  r=await run([{body:'bad json'}]);assert.match(r.elements.connection.textContent,/格式异常/);
- r=await run([{timeout:true}]);assert.match(r.elements.connection.textContent,/20 秒/);
- r=await run([{body:{AccessToken:'mock-token'}},{body:{Ready:false}}]);assert.match(r.elements.connection.textContent,/追加保护未启用/);
+ r=await run([{timeout:true}]);assert.match(r.elements.connection.textContent,/请求超时/);
+ r=await run([{body:{AccessToken:'mock-token',ServerId:'fixture-server'}},{body:{Ready:false}}]);assert.match(r.elements.connection.textContent,/追加保护未启用/);
  r=await run([],'file:///fixture/ScopedImport/app.html');assert.equal(r.requests.length,0);assert.equal(r.elements.login.hidden,true);assert.equal(r.elements.localFileHelp.hidden,false);assert.match(r.elements.connection.textContent,/本地文件/);
  console.log('PASS: 8 login cases; file URL rejected before credentials; no media import submitted');
 })().catch(e=>{console.error(e);process.exitCode=1});

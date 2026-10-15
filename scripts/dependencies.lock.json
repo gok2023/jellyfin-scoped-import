@@ -50,6 +50,14 @@
         "sha256": "a87ce811a69e083d03c7aa101cc12b21ac2508c211462979d9a8522253d0b72b",
         "license": "GPL-3.0-only"
       }
+    },
+    "testRuntimeReferences": {
+      "Jellyfin.Database.Implementations.dll": {
+        "assemblyVersion": "10.11.11.0",
+        "sha256": "29bfe9f17e56ece6a0f7ee991e52b7bb096d346808dfde107bed706ed24cb105",
+        "license": "GPL-3.0-only",
+        "purpose": "Offline synthetic BaseItem construction only; no database opened"
+      }
     }
   }
 }

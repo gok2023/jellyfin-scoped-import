@@ -105,7 +105,7 @@ def _request(method, route, body=None, token=None):
         raise IsolationError('Invalid API route')
     if route.split('?')[0] in ('/Library/Refresh', '/System/Shutdown', '/System/Restart') or route.startswith(('/LabAppendProbe', '/TargetedImport', '/Startup')):
         raise IsolationError('Lifecycle, baseline scanning and obsolete probe APIs are forbidden')
-    headers = {'Content-Type': 'application/json', 'Authorization': 'MediaBrowser Client="ScopedImportTests", Device="DisposableHost", DeviceId="scoped-import-tests", Version="0.2.0"'}
+    headers = {'Content-Type': 'application/json', 'Authorization': 'MediaBrowser Client="ScopedImportTests", Device="DisposableHost", DeviceId="scoped-import-tests", Version="0.2.0.1"'}
     if token:
         headers['X-Emby-Token'] = token
     request = urllib.request.Request(BASE + route, headers=headers, method=method, data=None if body is None else json.dumps(body).encode())

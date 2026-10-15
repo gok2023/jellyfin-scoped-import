@@ -39,3 +39,11 @@ function Invoke-Dotnet([string[]]$Arguments) {
     & $Dotnet @Arguments
     if ($LASTEXITCODE -ne 0) { throw ('dotnet failed: ' + ($Arguments -join ' ')) }
 }
+
+function Assert-TestReferences {
+    foreach ($entry in $Lock.jellyfin.testRuntimeReferences.PSObject.Properties) {
+        $path = Assert-ProjectPath (Join-Path $LocalRoot ('jellyfin/test-runtime/' + $entry.Name))
+        if (-not (Test-Path -LiteralPath $path)) { throw 'Run scripts/bootstrap.ps1 to extract the locked offline test runtime reference.' }
+        Assert-Digest $path SHA256 $entry.Value.sha256
+    }
+}

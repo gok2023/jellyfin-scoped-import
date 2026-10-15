@@ -33,7 +33,7 @@ public sealed class Controller(Importer importer, ILibraryManager library, IItem
 
     [HttpGet("Libraries")]
     public IActionResult Libraries() => Ok(new { Ready = repository is RepositoryGuard,
-        Version = "0.2.0", Libraries = library.GetVirtualFolders().Select(x => new { x.ItemId, x.Name, x.Locations, x.CollectionType }) });
+        Version = "0.2.0.1", Libraries = library.GetVirtualFolders().Select(x => new { x.ItemId, x.Name, x.Locations, x.CollectionType }) });
 
     [HttpPost("Import")]
     public IActionResult Import([FromBody] ImportRequest request)
@@ -43,9 +43,12 @@ public sealed class Controller(Importer importer, ILibraryManager library, IItem
         catch (InvalidOperationException ex) { return Conflict(new { Message = ex.Message }); }
     }
 
-    [HttpGet("Operations/{id:guid}")]
-    public IActionResult Status(Guid id) => importer.Status(id) is { } state ? Ok(state) : NotFound();
+    [HttpGet("Operations/{id:guid}"), ResponseCache(NoStore = true, Location = ResponseCacheLocation.None)]
+    public IActionResult Status(Guid id) => importer.Status(id) is { } state ? Ok(state) : NotFound(new OperationNotFoundResponse("ScopedImport.OperationNotFound", id,
+        "记录已失效，原操作结果无法从该记录确认。"));
 
     [HttpGet("Audit")]
     public IActionResult Audit() => Ok(RepositoryGuard.Audit());
 }
+
+public sealed record OperationNotFoundResponse(string Code, Guid OperationId, string Message);

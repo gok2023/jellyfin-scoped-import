@@ -1,62 +1,59 @@
 # 当前技术状态
 
-更新：2026-10-14。阶段：正式工程为唯一活跃开发项目；当前仓库为 **Public**：本轮按用户明确授权，在安全、权属及文档门禁通过后经已认证GitHub CLI直接公开。目标：[gok2023/jellyfin-scoped-import](https://github.com/gok2023/jellyfin-scoped-import)。已有私有阶段发布的 v0.2.0.0 Release；本轮不创建新Release或替换附件，仅同步既有Release说明的当前可见性，不部署或访问生产。公开及匿名访问已验证，结果见本文末尾。
+更新：2026-10-16。当前版本 **0.2.0.1**，本轮按用户明确授权完成正式版本构建和 GitHub 发布流程；发布及清理结果在本页的正式产物节记录。仓库：[gok2023/jellyfin-scoped-import](https://github.com/gok2023/jellyfin-scoped-import)，Public，main。起始 HEAD 为 a3d0e470f119f1c5784d6e1cf928ab86cb48b7b6，先前未提交修复均属本次范围。生产服务、数据库、凭据和媒体未访问，不重写历史、不强推。
 
-## 版本、许可与维护范围
+## 当前版本、身份和许可
 
-正式源码在 src/ScopedImport；插件程序集0.2.0.0，GUID 347d2c09-78a1-4697-9c3d-e23566122144。仅支持Windows / 原版Jellyfin10.11.11.0 ABI及BaseItemRepository。
+- 插件 0.2.0.1，稳定 GUID `347d2c09-78a1-4697-9c3d-e23566122144`，Windows x64 / 原版 Jellyfin 10.11.11（ABI 10.11.11.0）及 BaseItemRepository。
+- csproj 的 AssemblyVersion/FileVersion/Version、Libraries API、客户端/页面、meta.json 与发布文件名均为 0.2.0.1；历史 0.2.0.0 标签/Release/附件保留。
+- GPL-3.0-only，见 LICENSE 和 THIRD_PARTY_NOTICES；Jellyfin 参考/测试组件保留其许可。历史贡献/摘录来源不完整，未发现明确冲突，来源补充仍是待办，不声明全部材料为原创。
+- 维护 src/ScopedImport、scripts、tests、tools、docs 和根构建说明；.local、artifacts、旧生产备份不入 Git。AGENTS 已审阅规则以独立文档提交纳入，不改变其他长期规则。
 
-作者决定采用 **GPL-3.0-only**，见LICENSE及THIRD_PARTY_NOTICES。不得把未知来源素材声明为作者原创；历史贡献/摘录记录不完整，未发现具体授权冲突，来源确认仍为待办。如发现实质冲突暂停相应分发。第三方版权和各自许可保留，不被本项目许可替换。
+## 当前行为与安全边界
 
-维护源码、脚本、测试、工具、文档及根构建配置；当前版本不是永久上限，未来升级按AGENTS验证并同步版本、依赖、文档。旧工程的历史源码、产物和实验状态已转存为仓库外私有备份，不是构建依赖；原旧根仅保留生产备份，不再作为开发或安装入口。
+ScopedImport 在 Jellyfin 内运行，由管理员提交具体路径，后台单任务枚举目标范围并只追加新条目。两套页面分别是独立 App 与管理配置页，使用 OperationId 查询；202 只表示已排队。FetchMetadata 优先，保留 FetchTmdb 兼容。
 
-## 架构
+- 仅已初始化的本地 Windows movies/tvshows 库；拒绝库根、UNC、越界、重解析点和歧义布局。电影为独立单片目录一个主视频；剧集支持 NFO、SxxEyy、E01 子目录，无季号且无既有其他季歧义时按第一季。
+- 现有条目按路径/类型/父级核对并跳过；不修补其元数据。创建前复查目标和仓储冲突；共享保存锁和追加上下文限制写入新 ID，不直接写数据库，不用全库扫描、祖先刷新或完整刷新兜底。
+- 枚举深度 8、10000 项、120 秒，任务 15 分钟、探测 60 秒、提供器 30 秒为合作式软时限。第三方绕过仓储或不响应取消不受完整约束，代理不是系统沙箱。
+- 媒体探测由宿主编码器驱动，可能启动 ffprobe；按库模式可能访问外部提供器。不支持 ISO/STRM/光盘目录、快捷方式、多版本和歧义季集，不承诺整个 Jellyfin 进程只访问输入目录。
 
-```mermaid
-flowchart TD
-  UI[app.html / import.html] --> API[Plugin.cs：管理员API]
-  API --> Job[Importer：后台单任务]
-  Job --> Plan[校验路径/库映射并枚举目标子树]
-  Plan --> Layout[EpisodeLayout：季集解析]
-  Layout --> New[跳过已有项，准备缺失条目]
-  New --> Meta[NFO / 按库远程元数据 / 媒体探测]
-  Meta --> Save[共享锁 + ILibraryManager.CreateItem]
-  Save --> Guard[RepositoryGuard：DI仓储追加代理]
-  Guard --> Persist[Jellyfin持久化服务]
-  Save --> Streams[新视频媒体流保存]
-  Job --> Status[OperationId状态查询]
-  Status --> UI
-```
+## 0.2.0.1 修复与能力边界
 
-插件运行在Jellyfin内，无Python常驻助手。Python/Node仅作测试工具；媒体探测由宿主编码器驱动，可能启动ffprobe。App允许匿名取页面，入库/库信息/状态/审计API要求管理员。FetchMetadata优先，保留FetchTmdb兼容；202只代表排队，操作状态在内存中，重启丢失。
+源码确认的原问题：两种模式都先读取 NFO，格式异常直接中断；切换模式仍会碰同一坏文件。原电影目录名未解析年份，远程合并还会重复读取 NFO；GetMetadata 仅合并部分字段，不等同完整刮削。Start 原已有 finally 释放锁；没有证据证明用户原现场永久锁死。配置页查询失败会重新允许提交，与独立页不同；之后又在两页复现旧编号 404 持续 busy，已补修。
 
-## 安全边界和技术决策
+- NFO 按操作读一次，终态清理 XML 缓存。无 NFO 可基础入库；非 XML、空/损坏文件、不支持根类型给中文警告后降级。合法 XML 注释/CDATA 可正常读取。打开流受 2,000,000 字节限制；DTD 禁止、XmlResolver=null、字符上限保留，UTF-8/16/32 回归覆盖。路径/访问/大小/取消/预算及仓储保护异常不降级，原文件不改，不联网解析 NFO URL。
+- 电影名称/年份用现有 Emby.Naming 纯解析；NFO 标题/年份/ID 优先，提供器返回的 ID 转交下一个提供器，空简介可补齐。选择和顺序委托固定版本的 [ProviderManager](https://github.com/jellyfin/jellyfin/blob/v10.11.11/MediaBrowser.Providers/Manager/ProviderManager.cs)，不强制启用禁用提供器。支持字段随新对象 CreateItem 保存。
+- Movies 状态区分 Created/ExistingSkipped 及 LocalOnly/FetchedFields/NoMatch/ProvidersUnavailable/ProviderFailed/ProviderTimeout；逐提供器记录 Metadata/NoMetadata/Error/Timeout。FetchedFields 只代表获取支持字段，不等于完整刮削、海报或演员流程。仓储保护异常专门分类并终止任务。
+- 两页按准确 ItemId 打开电影详情，兼容服务器基础路径且不携带令牌；用户正常登录后仍需点击更多菜单“刮削元数据”，输入名称、年份或 ID，自行选择结果。已有电影重新提交仍跳过写入，并给出同样指引，不宣称已检查其完整性。路由/菜单依据 [Web appRouter](https://github.com/jellyfin/jellyfin-web/blob/v10.11.11/src/components/router/appRouter.js) 和 [itemContextMenu](https://github.com/jellyfin/jellyfin-web/blob/v10.11.11/src/components/itemContextMenu.js)，未猜测识别表单深链。
+- 专用操作不存在响应为 HTTP 404 + Code=ScopedImport.OperationNotFound + 对应 OperationId，并声明 NoStore。两页按结构化状态区分网络/超时、401/403、代理或未确认 404、5xx、格式错误。确认失效仍提示原结果无法确认，不代表失败/没有写入；仅用户显式结束跟踪后重新检查 Libraries，就绪才开放新任务，不自动重发 POST。普通网络错误不能直接解锁。
+- 新存储键按服务器地址（含基础路径）和身份隔离，两页共享当前作用域。旧全局键不自动认领/查询，用户确认归属才迁移，或显式结束旧跟踪。清除只影响跟踪，不取消服务端任务，不绕过任务锁和既有项检查。状态在内存，重启/淘汰后无法恢复原结果；POST 响应丢失仍需人工确认服务端。
 
-- 已初始化movies/tvshows库；完整本地Windows路径。拒绝库根、UNC、越界、链接/重解析点及歧义布局。
-- 单片电影目录一个主视频；剧集支持NFO、SxxEyy、E01子目录。无季号按第一季，但已有其他季的歧义会拒绝。ISO/STRM/光盘/复杂多版不支持。
-- 只处理新对象的元数据，不走完整刷新、远程海报或演员创建。既有项按路径/类型/父级核对并跳过，部分成功不自动回滚；重试不自动修补已创建项。
-- 枚举深度8、10000项、120秒；任务15分钟、探测60秒、提供器30秒为软时限。
-- 标准Updated通知可能回溯父级，完整刷新会改旧项；“先查不存在再CreateItem”仍有upsert竞争。当前共享仓储锁/追加上下文复查替代盲目创建；不直接写数据库。
-- 代理不是系统沙箱或数据库唯一约束；第三方绕过仓储/替换服务、合法后台扫描和不响应取消的I/O不受完整约束。无全进程I/O证明。
-- 客户端0.1.1和某条0.1错误提示为保留的历史标识，不是程序集版本。App静态提示现已区分历史隔离验证与新工程离线验证；没有改变页面脚本或入库逻辑。
+## 验证依据与用户反馈
 
-## 工程与构建
+**用户反馈**：本轮用户报告“已实际测试修复版，通过、没有发现问题”。对应上一轮交付目录的 0.2.0.1 DLL，SHA256=`2a11e9d8b576ac77b9c0fd9ef627a2709660bd29eca23a3280c0f62d3df0e709`；原 ZIP SHA256=`6d52c580e180c295b764b286ad0800a6a9aedd5e65234e70ff722d0ee8eba15b`。开始时实际 DLL/ZIP、meta、当前 src 与依赖锁逐项匹配原清单。用户没有逐项提供测试条件、场景、日志或 I/O 证据，反馈不能被扩写成全部场景、反向代理、完整自动刮削或全进程 I/O 通过。
 
-- 仅迁移七项正式文件和当前有效测试。四业务C#未变；HTML仅占位路径脱敏和必要验证说明；csproj仅工程引用/版本/许可/仓库元数据调整。
-- 排除旧助手、规划/探针工程、旧安装器、生产备份/数据库/日志、研究快照。必要公共测试工具抽为tests/integration/support/lab.py。
-- global.json锁SDK9.0.318；dependencies.lock.json锁官方归档、项目SHA256、上游MD5及六参考DLL摘要/ABI。SDK使用官方SHA512。Jellyfin归档SHA256是项目记录，不是上游签名认证。
-- Directory.Build.props仅用本项目.local参考路径，PathMap脱敏PE调试路径。NuGet.Config清空包源（无PackageReference），不读取旧工程DLL。
-- bootstrap只校验/提取依赖，不启动宿主；build用唯一输出目录、ArtifactCheck验证版本/资源/ABI/调试路径，再离线测试和白名单打包。
-- 当前ZIP白名单：正式DLL、meta.json、README、CHANGELOG、THIRD_PARTY_NOTICES、LICENSE、SHA256SUMS；没有SDK/宿主/凭据/数据库/测试插件；历史发布采用该白名单；本轮只生成离线候选包，不上传。
-- 构建清单记录许可、来源待办、源/依赖/包哈希及测试范围，位于忽略的artifacts目录。
+**历史离线证据**：修复前 VM 先复现旧编号问题（两页 0 通过/2 失败）；之后 107 项离线检查通过。此前 0.2.0.0/旧工程真实入库结果不作为 0.2.0.1 重新验收证据。本轮发布重新执行正式构建和离线测试，不借用旧 manifest。
 
-## 已完成验证与未完成项
+**本轮构建**：将执行 scripts/build.ps1；最终结果、摘要及用户测试版差异见正式产物节。测试为合成 NFO/一字节假视频、内存替身和 Node VM，不启动 Jellyfin/编码器/数据库。14 命名、8 登录、2 配置选择、18 导入 UI、33 恢复 UI、21 ImportTests、11 隔离门禁，共 107 个不同粒度用例/检查组。MetadataFixtures 仅编译不装载；测试说明见 tests/README.md。
 
-工程迁移和首次提交前终审分别完成35项安全离线检查：14命名、8登录、2配置选择、11隔离门禁。编译0警告/0错误；MetadataFixtures仅编译未装载。原0.2历史记录的隔离入库/远程TMDb/重启结果及0.1实盘用户反馈不是当前新工程重新执行的证据。
+**未验证**：可证明隔离的一次性宿主引导尚未完成；本轮不运行真实集成/重启、反向代理、全进程 I/O 或第三方组合。控制器契约直接调用 action，非 ASP.NET 中间件集成；VM 不等同真实浏览器。软时限不能强制终止不合作提供器。旧 DLL 裸 404 或丢弃 JSON 的代理无法提供不存在确认。Linux/Docker/其他 ABI 未验证。
 
-终审实际Git枚举37项原源码候选，12项忽略探针均通过；未发现真实凭据、私人路径或私有产物。新许可证加入后，已复核38项暂存清单和远程源码树，远程38个blob哈希与本地首次提交逐项一致。本轮许可/静态文案/打包变更后再次通过35项离线检查，编译0警告0错误；候选ZIP仅含7项正式插件/文档/许可内容。为使克隆源码与验收工作树一致，文本统一LF，不改业务逻辑。
+## 工程、依赖与正式产物
 
-真实基础/v02/远程/重启集成尚未运行：缺独立宿主bootstrap、FFmpeg和可证明隔离的前态。全进程I/O及实际第三方组合尚未验收。正式生产加载版本未知且本轮不查。
+- global.json 锁 SDK 9.0.318；dependencies.lock.json 固定官方 Jellyfin 归档 SHA256/上游 MD5、六参考 DLL 和一个离线模型测试 DLL 的摘要/ABI/许可。归档 SHA256 为项目观察，不是官方签名认证。无 PackageReference，不读旧工程 DLL。
+- bootstrap 只下载/提取固定引用，不启动宿主；本轮复用已核验依赖，不重新引导。build 使用唯一输出目录，ArtifactCheck 校验版本、ABI、资源、调试路径，再离线测试和白名单打包。
+- ZIP 七文件白名单：ScopedImport_0.2.0.1/ScopedImport.dll、同目录 meta.json、README、CHANGELOG、THIRD_PARTY_NOTICES、LICENSE、SHA256SUMS.txt。不含 SDK/宿主/数据库/凭据/日志/媒体或 fixture DLL。
+- 正式目录固定为 artifacts/ScopedImport-0.2.0.1，保留 ZIP、外部 SHA256、可安装子目录、build-manifest.json 和必要脱敏验证摘要。仅在远程正式附件核验完成后清理其他 artifacts 子项；不跟随重解析点，不触及 .local、tests、Git 或仓库外备份。
+- 发布按正常快进推送、v0.2.0.1 标签、Draft 上传/下载摘要核验后转正式 Latest；不强推、不覆盖不同身份版本，不改变可见性/许可/无关设置，保留 v0.2.0.0 标签和附件。当前执行结果将在本节收尾记录。
+
+## 下一步
+
+继续补充历史贡献来源；独立完成严格隔离宿主引导后，验收真实提供器、持久化/重启、Web 登录/代理/基础路径及无关既有项快照，再补系统 I/O 和第三方组合证据。完整自动图片/演员刮削须另行审查 10.11.11 刷新调用链、人物/父级/关联写入、图片文件范围与预算，不能因 RefreshSingleItem 名称而放宽边界。本轮不新增此业务，不访问生产。
+
+## 历史记录说明
+
+以下保留截至 0.2.0.0 的初始化、公开及退役事实；其中“本轮”指当时阶段，旧 artifacts 路径只是历史证据来源，不覆盖上文 0.2.0.1 当前状态。发布收尾将提取必要脱敏摘要，再清理旧临时产物。
 
 ## GitHub初始化记录（历史Private阶段）
 

@@ -38,7 +38,7 @@ public class RepositoryGuard : DispatchProxy
     public static readonly object SaveGate = new();
     private static readonly AsyncLocal<HashSet<Guid>?> Permitted = new();
     private static readonly AsyncLocal<bool> ReadOnly = new();
-    public static IDisposable ReadOnlyScope() { if (ReadOnly.Value) throw new InvalidOperationException("Nested metadata scope"); ReadOnly.Value = true; return new ReadScope(); }
+    public static IDisposable ReadOnlyScope() { if (ReadOnly.Value) throw new RepositoryProtectionException("Nested metadata scope"); ReadOnly.Value = true; return new ReadScope(); }
     private sealed class ReadScope : IDisposable { public void Dispose() => ReadOnly.Value = false; }
     public static long Conflicts;
     private static long sequence;
@@ -47,7 +47,7 @@ public class RepositoryGuard : DispatchProxy
 
     public static IDisposable AppendScope(IEnumerable<Guid> ids)
     {
-        if (Permitted.Value is not null) throw new InvalidOperationException("Nested import scope");
+        if (Permitted.Value is not null) throw new RepositoryProtectionException("Nested import scope");
         Permitted.Value = ids.ToHashSet();
         return new Scope();
     }
@@ -57,7 +57,7 @@ public class RepositoryGuard : DispatchProxy
     {
         ArgumentNullException.ThrowIfNull(method);
         if (ReadOnly.Value && !(method.Name.StartsWith("Get", StringComparison.Ordinal) || method.Name.StartsWith("Retrieve", StringComparison.Ordinal) || method.Name == "ItemExistsAsync"))
-            throw new InvalidOperationException("Metadata provider may not write media records: " + method.Name);
+            throw new RepositoryProtectionException("Metadata provider may not write media records: " + method.Name);
         if (method.Name is "SaveItems" or "DeleteItem")
         {
             lock (SaveGate)
@@ -65,26 +65,26 @@ public class RepositoryGuard : DispatchProxy
                 var allowed = Permitted.Value;
                 if (allowed is not null)
                 {
-                    if (method.Name != "SaveItems") throw new InvalidOperationException("Append scope forbids deletion");
+                    if (method.Name != "SaveItems") throw new RepositoryProtectionException("Append scope forbids deletion");
                     foreach (var item in (IReadOnlyList<BaseItem>)args![0]!)
                     {
-                        if (!allowed.Contains(item.Id)) throw new InvalidOperationException("Write outside new-item set");
+                        if (!allowed.Contains(item.Id)) throw new RepositoryProtectionException("Write outside new-item set");
                         var conflict = Inner.RetrieveItem(item.Id) is not null;
                         if (!string.IsNullOrEmpty(item.Path))
                             conflict |= Inner.GetItemList(new InternalItemsQuery { Path = item.Path, Limit = 1 }).Count != 0;
                         if (item is Season)
                             conflict |= Inner.GetItemList(new InternalItemsQuery { ParentId = item.ParentId,
                                 IncludeItemTypes = [Jellyfin.Data.Enums.BaseItemKind.Season], IndexNumber = item.IndexNumber, Limit = 1 }).Count != 0;
-                        else if (string.IsNullOrEmpty(item.Path)) throw new InvalidOperationException("Pathless item is unsupported");
+                        else if (string.IsNullOrEmpty(item.Path)) throw new RepositoryProtectionException("Pathless item is unsupported");
                         if (item is Episode)
                             conflict |= Inner.GetItemList(new InternalItemsQuery { ParentId = item.ParentId,
                                 IncludeItemTypes = [Jellyfin.Data.Enums.BaseItemKind.Episode], IndexNumber = item.IndexNumber, Limit = 1 }).Count != 0;
                         if (conflict)
                         {
                             Interlocked.Increment(ref Conflicts);
-                            throw new InvalidOperationException("AppendConflict: existing item was preserved");
+                            throw new RepositoryProtectionException("AppendConflict: existing item was preserved");
                         }
-                        if (Inner.RetrieveItem(item.ParentId) is null) throw new InvalidOperationException("Parent disappeared");
+                        if (Inner.RetrieveItem(item.ParentId) is null) throw new RepositoryProtectionException("Parent disappeared");
                     }
                 }
                 var result = Forward(method, args);
@@ -98,7 +98,7 @@ public class RepositoryGuard : DispatchProxy
             }
         }
         if (Permitted.Value is not null && method.Name is not ("RetrieveItem" or "GetItemList" or "GetItems" or "GetItemIdsList" or "GetCount" or "ItemExistsAsync"))
-            throw new InvalidOperationException("Unexpected repository operation in append scope: " + method.Name);
+            throw new RepositoryProtectionException("Unexpected repository operation in append scope: " + method.Name);
         return Forward(method, args);
     }
 
@@ -109,3 +109,5 @@ public class RepositoryGuard : DispatchProxy
         { ExceptionDispatchInfo.Capture(ex.InnerException).Throw(); throw; }
     }
 }
+
+internal sealed class RepositoryProtectionException(string message) : InvalidOperationException(message);

@@ -1,21 +1,149 @@
 <!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Jellyfin 定向入库</title>
 <style>body{font:16px/1.65 system-ui;background:#111923;color:#e9eff8;max-width:860px;margin:40px auto;padding:0 22px}h1{font-size:30px;margin-bottom:0}.muted{color:#a8b9cc}section{background:#1d2938;border:1px solid #344456;border-radius:12px;padding:24px;margin:22px 0}label{display:block;margin:12px 0 4px}input:not([type=checkbox]){box-sizing:border-box;width:100%;background:#111923;color:inherit;border:1px solid #60758d;border-radius:6px;padding:12px;font:inherit}button{border:0;border-radius:6px;background:#6ed8d0;color:#082725;font:600 16px system-ui;padding:12px 22px;margin-top:16px;cursor:pointer}button:disabled{opacity:.45;cursor:default}pre{white-space:pre-wrap;overflow-wrap:anywhere;font:14px/1.8 system-ui}summary{cursor:pointer}.badge{color:#6ed8d0}a{color:#6ed8d0}</style>
-<h1>Jellyfin 定向入库 <span class="badge">0.2 测试版</span></h1>
+<h1>Jellyfin 定向入库 <span class="badge">0.2.0.1</span></h1>
 <p class="muted">粘贴新增影视路径，自动匹配媒体库，只追加缺失条目。</p>
 <p id="localFileHelp" hidden>这是页面源文件，不能在这里登录。请打开 <a href="http://127.0.0.1:8096/ScopedImport/App">本机 Jellyfin 定向入库页面</a>，再输入管理员账号。无需修改浏览器安全设置。</p>
 <section><form id="login"><b>管理员登录</b><p class="muted" id="host"></p><label for="user">用户名</label><input id="user" autocomplete="username" required><label for="password">密码</label><input id="password" type="password" autocomplete="current-password" required><button id="loginButton">连接 Jellyfin</button></form><p id="connection" aria-live="polite">尚未连接</p></section>
-<section><form id="import"><label for="path">新增电影目录、剧目目录、季目录或剧集文件</label><input id="path" placeholder="E:\Media\TV\ExampleShow" required><label for="metadata">新条目的元数据</label><select id="metadata" style="padding:12px;width:100%;background:#111923;color:inherit"><option value="library">按 Jellyfin 媒体库设置获取（推荐）</option><option value="local">只读取本地 NFO，不联网刮削</option></select><button id="submit" disabled>定向入库</button></form><button id="resume" hidden>重新查询上次操作</button><pre id="result" aria-live="polite">等待提交。</pre><details><summary>访问目录与文件记录</summary><pre id="access"></pre></details></section>
+<section><form id="import"><label for="path">新增电影目录、剧目目录、季目录或剧集文件</label><input id="path" placeholder="E:\Media\TV\ExampleShow" required><label for="metadata">新条目的元数据</label><select id="metadata" style="padding:12px;width:100%;background:#111923;color:inherit"><option value="library">按 Jellyfin 媒体库设置获取（推荐）</option><option value="local">只读取本地 NFO，不联网刮削</option></select><button id="submit" disabled>定向入库</button></form><button id="resume" hidden>重新查询上次操作</button><button type="button" id="forget" hidden>结束旧编号跟踪并检查就绪状态</button><pre id="result" aria-live="polite">等待提交。</pre><div id="movies"></div><details><summary>访问目录与文件记录</summary><pre id="access"></pre></details></section>
 <p class="muted">支持 MKV、MP4 等普通视频和 S01E01 命名、E01 单集目录。电影需独立单片目录。不支持 ISO、STRM、快捷方式、光盘目录和多版本影片。已有条目跳过，元数据警告不会触发再次提交。</p>
 <p class="muted">历史实现曾在隔离宿主完成实际入库验证；当前新工程已完成安全离线检查，完整集成、系统级文件访问范围及 CloudDrive2 实盘验收尚未完成。请先在隔离环境验证。</p>
 <script>
 (()=>{'use strict';const $=id=>document.getElementById(id);
 if(!['http:','https:'].includes(new URL(location.href).protocol)){$('localFileHelp').hidden=false;$('login').hidden=true;$('import').hidden=true;$('connection').textContent='打开方式不正确：当前是本地文件，登录请求未发送。';return;}
-let token=null,busy=false,timer=null,operation=sessionStorage.getItem('scoped-operation');
-const base=new URL('../',location.href);$('host').textContent='服务器：'+base.origin+base.pathname;
-function api(route,method='GET',body){return new Promise((resolve,reject)=>{const request=new XMLHttpRequest();request.open(method,new URL(route,base).href,true);request.timeout=20000;request.setRequestHeader('Content-Type','application/json');request.setRequestHeader('Authorization','MediaBrowser Client="ScopedImport", Device="Browser", DeviceId="scoped-import-browser", Version="0.1.1"');if(token)request.setRequestHeader('X-Emby-Token',token);request.onload=()=>{if(request.status===401){reject(Error('HTTP 401：认证被拒绝，请检查账号、密码或登录状态'));return;}if(request.status===403){reject(Error('HTTP 403：当前账号没有管理员权限'));return;}if(request.status<200||request.status>=300){reject(Error('服务器返回 HTTP '+request.status));return;}try{const data=JSON.parse(request.responseText);if(!data||typeof data!=='object')throw Error();resolve(data);}catch{reject(Error('服务器返回格式异常，未收到有效 JSON'));}};request.onerror=()=>reject(Error('网络连接失败，请检查 Jellyfin 地址和浏览器扩展'));request.ontimeout=()=>reject(Error('等待服务器超过 20 秒，状态尚未确认'));request.onabort=()=>reject(Error('请求已中止，状态尚未确认'));request.send(body===undefined?null:JSON.stringify(body));});}
-function controls(){$('submit').disabled=!token||busy;$('resume').hidden=!operation;}
-async function poll(){if(!operation||!token)return;clearTimeout(timer);try{const s=await api('ScopedImport/Operations/'+operation);$('result').textContent=s.Message+'\n操作编号：'+operation+'\n新增 '+s.Created.length+' 项；跳过 '+s.Skipped.length+' 项\n'+s.Created.map(x=>x.Type+'：'+x.Name).join('\n')+'\n'+s.Warnings.join('\n')+'\n'+(s.MetadataProviders||[]).map(x=>x.Type+' / '+x.Provider+'：'+x.Outcome).join('\n');$('access').textContent='枚举目录（插件记录，非系统跟踪）：\n'+s.EnumeratedDirectories.join('\n')+'\n\n读取文件：\n'+s.ReadFiles.join('\n');if(['Completed','Rejected','Partial'].includes(s.State)){busy=false;operation=null;sessionStorage.removeItem('scoped-operation');}else{busy=true;timer=setTimeout(poll,2000);}controls();}catch(e){$('result').textContent+='\n状态尚未确认：'+e.message+'。请重新查询，不要重复提交。';busy=true;controls();}}
-$('login').addEventListener('submit',async e=>{e.preventDefault();$('loginButton').disabled=true;let phase='身份认证';try{const r=await api('Users/AuthenticateByName','POST',{Username:$('user').value.trim(),Pw:$('password').value});if(typeof r.AccessToken!=='string'||!r.AccessToken)throw Error('认证响应缺少令牌');token=r.AccessToken;$('password').value='';phase='插件权限和就绪检查';const health=await api('ScopedImport/Libraries');if(!health.Ready)throw Error('追加保护未启用；仅支持 Jellyfin 10.11.11 原版存储服务');$('connection').textContent='已连接，追加保护已启用。';$('login').hidden=true;busy=!!operation;controls();if(operation)poll();}catch(e){token=null;$('connection').textContent=phase+'失败：'+e.message;controls();}finally{$('loginButton').disabled=false;}});
-$('import').addEventListener('submit',async e=>{e.preventDefault();if(busy||!token)return;busy=true;controls();$('result').textContent='正在提交……';try{const r=await api('ScopedImport/Import','POST',{Path:$('path').value.trim(),FetchMetadata:$('metadata').value==='library'});operation=r.OperationId;sessionStorage.setItem('scoped-operation',operation);poll();}catch(e){$('result').textContent='提交未确认：'+e.message+'。不会自动重试；如是网络中断，请先检查服务端。';busy=false;controls();}});
-$('resume').addEventListener('click',poll);controls();})();
+
+let token=null,serverId=null,busy=false,timer=null,polling=false,operation=null;
+const base=new URL('../',location.href),serverBase=base;
+const output=$('result'),submitButton=$('submit'),resumeButton=$('resume'),forgetButton=$('forget');
+const serverIdentity=()=>serverId;
+$('host').textContent='服务器：'+base.origin+base.pathname;
+function onAuthError(error){if(['Unauthorized','Forbidden'].includes(error.kind)){ready=false;token=null;$('login').hidden=false;$('connection').textContent=errorText(error);}}
+function renderAccess(s){$('access').textContent='枚举目录（插件记录，非系统跟踪）：\n'+s.EnumeratedDirectories.join('\n')+'\n\n读取文件：\n'+s.ReadFiles.join('\n');}
+function api(route,method='GET',body){return new Promise((resolve,reject)=>{
+ const request=new XMLHttpRequest();request.open(method,new URL(route,base).href,true);request.timeout=20000;
+ request.setRequestHeader('Content-Type','application/json');request.setRequestHeader('Authorization','MediaBrowser Client="ScopedImport", Device="Browser", DeviceId="scoped-import-browser", Version="0.2.0.1"');if(token)request.setRequestHeader('X-Emby-Token',token);
+ request.onload=()=>{let data;try{data=JSON.parse(request.responseText);}catch{}
+  if(request.status<200||request.status>=300){reject(httpFailure(request.status,data,route));return;}
+  if(!data||typeof data!=='object'){reject(failure('InvalidResponse'));return;}resolve(data);
+ };
+ request.onerror=()=>reject(failure('Network'));request.ontimeout=()=>reject(failure('Network'));request.onabort=()=>reject(failure('Network'));
+ request.send(body===undefined?null:JSON.stringify(body));
+});}
+
+const metadataLabels={LocalOnly:'仅本地处理，未调用远程提供器',FetchedFields:'已获取部分元数据；未执行完整刮削、远程图片或演员流程',NoMatch:'无匹配，等待手动识别',ProvidersUnavailable:'未启用或没有可用远程提供器，等待手动识别',ProviderFailed:'提供器失败，等待手动识别',ProviderTimeout:'提供器超时，等待手动识别',ExistingSkipped:'已有条目已跳过，元数据未经本次检查；不完整时请手动识别'};
+const providerLabels={Metadata:'返回元数据',NoMetadata:'无匹配',Error:'失败',Timeout:'超时'};
+function renderMovies(movies){
+ const container=$('movies');container.replaceChildren();
+ for(const movie of movies||[]){
+  const row=document.createElement('p'),text=document.createElement('span');
+  text.textContent=movie.Name+'：'+(movie.EntryState==='Created'?'条目已创建；':'')+(metadataLabels[movie.MetadataStatus]||movie.MetadataStatus)+'。ItemId：'+movie.ItemId+'。';row.appendChild(text);
+  if(/^(?:[a-f0-9]{32}|[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12})$/i.test(movie.ItemId)&&serverId){
+   const link=document.createElement('a');const url=new URL('web/index.html',base);
+   url.hash='/details?id='+encodeURIComponent(movie.ItemId.replace(/-/g,''))+'&serverId='+encodeURIComponent(serverId);
+   link.href=url.href;link.target='_blank';link.rel='noopener noreferrer';link.textContent='打开该电影详情';row.appendChild(link);
+  }
+  const help=document.createElement('span');help.textContent=' '+movie.ManualIdentification+' 此链接只打开详情页；若需登录，请使用 Jellyfin Web 管理员账户，返回此处可再次打开。';row.appendChild(help);container.appendChild(row);
+ }
+}
+
+
+function failure(kind,status=0){return Object.assign(Error(errorText({kind,status})),{kind,status});}
+function httpFailure(status,body,route){
+ const prefix='ScopedImport/Operations/',id=route.startsWith(prefix)?decodeURIComponent(route.slice(prefix.length)):null;
+ const sameId=(a,b)=>typeof a==='string'&&typeof b==='string'&&a.replace(/-/g,'').toLowerCase()===b.replace(/-/g,'').toLowerCase();
+ const confirmed=status===404&&id&&body&&body.Code==='ScopedImport.OperationNotFound'&&sameId(body.OperationId,id);
+ return failure(confirmed?'OperationNotFound':status===401?'Unauthorized':status===403?'Forbidden':status===404?'EndpointNotFound':status>=500?'ServiceError':status===0?'Network':'HttpError',status);
+}
+function errorText(error){
+ switch(error.kind){
+ case 'OperationNotFound':return '记录已失效，原操作结果无法从该记录确认。服务可能已重启或记录已淘汰；这不代表原任务失败或没有写入。可显式结束跟踪后检查就绪状态，再决定是否提交新任务。';
+ case 'Unauthorized':return 'HTTP 401：登录已失效或未认证，请重新登录管理员账户后查询；旧编号继续保留。';
+ case 'Forbidden':return 'HTTP 403：当前账户没有管理员权限，请使用管理员账户重新登录后查询；旧编号继续保留。';
+ case 'EndpointNotFound':return 'HTTP 404：未收到插件对该编号的不存在确认；请检查插件加载、服务器地址和基础路径。原操作结果未知，不能据此结束跟踪。';
+ case 'ServiceError':return '服务故障 HTTP '+error.status+'，原操作结果尚未确认；请恢复服务后重新查询。';
+ case 'InvalidResponse':return '服务器返回格式异常，未收到有效 JSON；原操作结果尚未确认。';
+ case 'Network':return '网络连接失败或请求超时，状态尚未确认；请恢复连接后重新查询，不要重复提交。';
+ default:return '服务器返回 HTTP '+error.status+'，状态尚未确认；请检查服务后重新查询。';
+ }
+}
+let trackingKey=null,trackingLoaded=false,legacy=false,missing=false,ready=false,checking=false;
+function loadTracking(){
+ trackingKey='scoped-operation:v2:'+encodeURIComponent(serverBase.href)+':'+encodeURIComponent(serverIdentity().toLowerCase());
+ operation=sessionStorage.getItem(trackingKey);legacy=false;
+ if(!operation){operation=sessionStorage.getItem('scoped-operation');legacy=!!operation;}
+ missing=false;busy=!!operation;trackingLoaded=true;
+}
+function saveTracking(){sessionStorage.setItem(trackingKey,operation);}
+function removeTracking(){
+ const key=legacy?'scoped-operation':trackingKey;
+ if(key&&sessionStorage.getItem(key)===operation)sessionStorage.removeItem(key);
+}
+function legacyNotice(){output.textContent='发现旧版未绑定服务器的操作编号：'+operation+'。无法确认其归属，尚未向当前服务器查询。确认归属后可点击查询，或显式结束旧编号跟踪；结束跟踪不取消服务端任务，也不代表任务失败或没有写入。';}
+function controls(){
+ submitButton.disabled=!ready||busy;
+ resumeButton.hidden=!operation&&ready;
+ resumeButton.disabled=polling||checking;
+ resumeButton.textContent=legacy?'确认归属并在此服务器查询旧编号':operation?'重新查询上次操作':'重新检查连接与就绪状态';
+ forgetButton.hidden=!operation||(!missing&&!legacy);
+ forgetButton.disabled=polling||checking;
+}
+async function checkReady(prefix=''){
+ if(checking)return false;checking=true;ready=false;controls();
+ try{const health=await api('ScopedImport/Libraries');
+  if(health.Ready!==true){output.textContent=prefix+'追加保护未启用；仅支持 Jellyfin 10.11.11 原版存储服务。新任务入口保持关闭。';return false;}
+  ready=true;return true;
+ }catch(error){onAuthError(error);output.textContent=prefix+'就绪检查失败：'+errorText(error);return false;}
+ finally{checking=false;controls();}
+}
+async function initialize(){
+ if(polling||checking||(busy&&!operation))return false;
+ if(!await checkReady())return false;
+ if(!trackingLoaded)loadTracking();
+ if(legacy)legacyNotice();else if(operation)await poll();else output.textContent='已就绪。粘贴新增目录后提交。';
+ controls();return true;
+}
+async function poll(){
+ if(!operation||polling||legacy||!ready)return;
+ const queried=operation;polling=true;missing=false;clearTimeout(timer);controls();
+ try{const s=await api('ScopedImport/Operations/'+encodeURIComponent(queried));if(operation!==queried)return;
+  output.textContent=s.Message+'\n操作编号：'+queried+'\n新增 '+s.Created.length+' 项；跳过 '+s.Skipped.length+' 项\n'+s.Created.map(x=>x.Type+'：'+x.Name).join('\n')+'\n'+s.Warnings.join('\n')+'\n'+(s.MetadataProviders||[]).map(x=>x.Type+' / '+x.Provider+'：'+(providerLabels[x.Outcome]||x.Outcome)).join('\n');
+  renderMovies(s.Movies);renderAccess(s);
+  if(['Completed','Rejected','Partial'].includes(s.State)){removeTracking();busy=false;operation=null;}else{busy=true;timer=setTimeout(poll,2000);}
+ }catch(error){if(operation!==queried)return;missing=error.kind==='OperationNotFound';busy=true;
+  if(missing)renderMovies([]);onAuthError(error);output.textContent=errorText(error)+'\n操作编号：'+queried;
+ }finally{polling=false;controls();}
+}
+resumeButton.addEventListener('click',async()=>{
+ if(polling||checking)return;
+ if(!ready&&!await checkReady())return;
+ if(!trackingLoaded)loadTracking();
+ if(legacy){removeTracking();legacy=false;saveTracking();}
+ if(operation)await poll();else{output.textContent='已就绪。粘贴新增目录后提交。';controls();}
+});
+forgetButton.addEventListener('click',async()=>{
+ if(polling||checking||!operation||(!missing&&!legacy))return;
+ const ended=operation;clearTimeout(timer);removeTracking();operation=null;busy=false;legacy=false;missing=false;ready=false;renderMovies([]);
+ const notice='已结束对旧编号 '+ended+' 的跟踪；原操作结果仍无法由此确认。这不会取消服务端任务，也不表示没有写入。\n';
+ output.textContent=notice+'正在重新检查就绪状态……';controls();
+ if(await checkReady(notice))output.textContent=notice+'已通过就绪检查，可选择模式后显式提交新任务；服务端任务锁及已有项检查仍会执行。';
+});
+
+$('login').addEventListener('submit',async e=>{
+ e.preventDefault();$('loginButton').disabled=true;let phase='身份认证';
+ try{const r=await api('Users/AuthenticateByName','POST',{Username:$('user').value.trim(),Pw:$('password').value});
+  if(typeof r.AccessToken!=='string'||!r.AccessToken)throw Error('认证响应缺少令牌');
+  if(typeof r.ServerId!=='string'||!r.ServerId)throw Error('认证响应缺少服务器标识');
+  token=r.AccessToken;serverId=r.ServerId;$('password').value='';trackingLoaded=false;operation=null;busy=false;
+  phase='插件权限和就绪检查';
+  if(!await initialize()||!token){token=null;$('connection').textContent=phase+'失败：'+output.textContent;$('login').hidden=false;controls();return;}
+  $('connection').textContent='已连接，追加保护已启用。';$('login').hidden=true;
+ }catch(error){token=null;ready=false;$('connection').textContent=phase+'失败：'+error.message;controls();}
+ finally{$('loginButton').disabled=false;}
+});
+$('import').addEventListener('submit',async e=>{
+ e.preventDefault();if(busy||!token||!ready)return;busy=true;controls();output.textContent='正在提交……';renderMovies([]);
+ try{const r=await api('ScopedImport/Import','POST',{Path:$('path').value.trim(),FetchMetadata:$('metadata').value==='library'});
+  operation=r.OperationId;saveTracking();output.textContent='请求已提交，操作编号：'+operation;poll();
+ }catch(error){onAuthError(error);output.textContent='提交未确认：'+errorText(error)+' 不会自动重试；请先确认服务端。';busy=false;controls();}
+});
+controls();})();
 </script></html>

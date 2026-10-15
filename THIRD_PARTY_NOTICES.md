@@ -13,9 +13,10 @@
 | MediaBrowser.Common | https://github.com/jellyfin/jellyfin/blob/v10.11.11/MediaBrowser.Common/MediaBrowser.Common.csproj |
 | MediaBrowser.Controller | https://github.com/jellyfin/jellyfin/blob/v10.11.11/MediaBrowser.Controller/MediaBrowser.Controller.csproj |
 | MediaBrowser.Model | https://github.com/jellyfin/jellyfin/blob/v10.11.11/MediaBrowser.Model/MediaBrowser.Model.csproj |
+| Jellyfin.Database.Implementations（离线合成对象测试） | https://github.com/jellyfin/jellyfin/blob/v10.11.11/src/Jellyfin.Database/Jellyfin.Database.Implementations/Jellyfin.Database.Implementations.csproj |
 | Jellyfin.Extensions（命名测试） | https://github.com/jellyfin/jellyfin/blob/v10.11.11/src/Jellyfin.Extensions/Jellyfin.Extensions.csproj |
 
-获取自[官方固定版本分发](https://repo.jellyfin.org/?path=/server/windows/stable/v10.11.11/amd64)，版本/归档摘要/DLL摘要见 scripts/dependencies.lock.json。参考DLL不提交到源码仓库，也不随插件ZIP分发。
+获取自[官方固定版本分发](https://repo.jellyfin.org/?path=/server/windows/stable/v10.11.11/amd64)，版本/归档摘要/DLL摘要见 scripts/dependencies.lock.json。参考DLL不提交到源码仓库，也不随插件ZIP分发。测试仅加载 Database.Implementations 的模型依赖，不打开数据库或加载数据库提供器；显式 ProviderStub 按锁定接口签名生成，仅实现测试返回及拒绝其他调用，不复制上游业务实现。
 
 Jellyfin根LICENSE为GPLv2文本，不能用它概括上述组件自己的GPL-3.0-only声明。[官方插件模板](https://github.com/jellyfin/jellyfin-plugin-template/blob/master/README.md#licensing)说明GPLv3与插件链接的关系。本项目没有复制 targeted-scans/autoscan/autopulse 的研究源码、完整Jellyfin源码快照或已退役的历史实验工程。
 
@@ -35,6 +36,6 @@ SDK位于忽略目录.local，不随源码或插件分发。ASP.NET Core及.NET�
 
 ## 分发边界
 
-历史阶段已在Private仓库发布v0.2.0.0 Release及对应源码标签；本轮用户明确授权在安全和权属门禁通过后公开现有源码仓库，未授权生产部署。本轮不创建新Release，也不替换既有安装包。插件ZIP包含LICENSE和本说明；历史附件中的Private表述是发布时快照，当前仓库可见性以docs/PROJECT.md及GitHub实际状态为准。
+历史阶段在 Private 仓库发布 v0.2.0.0，之后仓库已公开；本轮发布独立的 v0.2.0.1 正式插件及对应源码标签，保留原标签和资产。没有更改 GPL-3.0-only、仓库可见性或第三方权利声明，不部署生产。插件 ZIP 包含 LICENSE 和本说明。历史来源不完整的限制继续保留。
 
 面向他人分发二进制时须满足GPL对应源码、构建说明和必要通知等义务；原v0.2.0.0二进制对应同名Git标签，不能以之后main的文档更新冒充其构建来源。历史记录不完备的事实继续保留，仓库可见性不消除未授权复制问题。

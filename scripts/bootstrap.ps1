@@ -34,7 +34,7 @@ $serverZip = Get-LockedArchive $Lock.jellyfin SHA256 $Lock.jellyfin.sha256
 Assert-Digest $serverZip MD5 $Lock.jellyfin.md5
 $serverRoot = Assert-ProjectPath (Join-Path $LocalRoot 'jellyfin/server')
 New-Item -ItemType Directory -Path $serverRoot -Force | Out-Null
-# Only six references are extracted; the full server is neither started nor installed.
+# Only locked compile/test references are extracted; no server is started or installed.
 Add-Type -AssemblyName System.IO.Compression.FileSystem
 $zip = [IO.Compression.ZipFile]::OpenRead($serverZip)
 try {
@@ -44,8 +44,16 @@ try {
         $target = Assert-ProjectPath (Join-Path $serverRoot $reference.Name)
         [IO.Compression.ZipFileExtensions]::ExtractToFile($entries[0],$target,$true)
     }
+    foreach ($reference in $Lock.jellyfin.testRuntimeReferences.PSObject.Properties) {
+        $entries = @($zip.Entries | Where-Object Name -EQ $reference.Name)
+        if ($entries.Count -ne 1) { throw 'Unexpected test runtime archive layout.' }
+        $target = Assert-ProjectPath (Join-Path $LocalRoot ('jellyfin/test-runtime/' + $reference.Name))
+        New-Item -ItemType Directory -Path (Split-Path -Parent $target) -Force | Out-Null
+        [IO.Compression.ZipFileExtensions]::ExtractToFile($entries[0],$target,$true)
+    }
 } finally { $zip.Dispose() }
 Assert-References
+Assert-TestReferences
 Push-Location $ProjectRoot
-try { Set-LocalDotnet; Write-Host 'Verified SDK and six Jellyfin reference assemblies. No server was started.' }
+try { Set-LocalDotnet; Write-Host 'Verified SDK, six Jellyfin compile references and one offline test runtime reference. No server was started.' }
 finally { Pop-Location }
