@@ -35,7 +35,7 @@ ScopedImport 在 Jellyfin 内运行，由管理员提交具体路径，后台单
 
 **历史离线证据**：修复前 VM 先复现旧编号问题（两页 0 通过/2 失败）；之后 107 项离线检查通过。此前 0.2.0.0/旧工程真实入库结果不作为 0.2.0.1 重新验收证据。本轮发布重新执行正式构建和离线测试，不借用旧 manifest。
 
-**本轮构建**：将执行 scripts/build.ps1；最终结果、摘要及用户测试版差异见正式产物节。测试为合成 NFO/一字节假视频、内存替身和 Node VM，不启动 Jellyfin/编码器/数据库。14 命名、8 登录、2 配置选择、18 导入 UI、33 恢复 UI、21 ImportTests、11 隔离门禁，共 107 个不同粒度用例/检查组。MetadataFixtures 仅编译不装载；测试说明见 tests/README.md。
+**本轮实测**：执行 `pwsh -NoProfile -File scripts/build.ps1`，0 警告 0 错误，107 个离线用例/检查组全部通过，ArtifactCheck、ABI/版本/资源/调试路径和七文件白名单通过；源码/依赖锁逐项匹配本次清单。测试为合成 NFO/一字节假视频、内存替身和 Node VM，不启动 Jellyfin/编码器/数据库。14 命名、8 登录、2 配置选择、18 导入 UI、33 恢复 UI、21 ImportTests、11 隔离门禁，共 107 个不同粒度用例/检查组。MetadataFixtures 仅编译不装载；测试说明见 tests/README.md。
 
 **未验证**：可证明隔离的一次性宿主引导尚未完成；本轮不运行真实集成/重启、反向代理、全进程 I/O 或第三方组合。控制器契约直接调用 action，非 ASP.NET 中间件集成；VM 不等同真实浏览器。软时限不能强制终止不合作提供器。旧 DLL 裸 404 或丢弃 JSON 的代理无法提供不存在确认。Linux/Docker/其他 ABI 未验证。
 
@@ -44,8 +44,12 @@ ScopedImport 在 Jellyfin 内运行，由管理员提交具体路径，后台单
 - global.json 锁 SDK 9.0.318；dependencies.lock.json 固定官方 Jellyfin 归档 SHA256/上游 MD5、六参考 DLL 和一个离线模型测试 DLL 的摘要/ABI/许可。归档 SHA256 为项目观察，不是官方签名认证。无 PackageReference，不读旧工程 DLL。
 - bootstrap 只下载/提取固定引用，不启动宿主；本轮复用已核验依赖，不重新引导。build 使用唯一输出目录，ArtifactCheck 校验版本、ABI、资源、调试路径，再离线测试和白名单打包。
 - ZIP 七文件白名单：ScopedImport_0.2.0.1/ScopedImport.dll、同目录 meta.json、README、CHANGELOG、THIRD_PARTY_NOTICES、LICENSE、SHA256SUMS.txt。不含 SDK/宿主/数据库/凭据/日志/媒体或 fixture DLL。
-- 正式目录固定为 artifacts/ScopedImport-0.2.0.1，保留 ZIP、外部 SHA256、可安装子目录、build-manifest.json 和必要脱敏验证摘要。仅在远程正式附件核验完成后清理其他 artifacts 子项；不跟随重解析点，不触及 .local、tests、Git 或仓库外备份。
-- 发布按正常快进推送、v0.2.0.1 标签、Draft 上传/下载摘要核验后转正式 Latest；不强推、不覆盖不同身份版本，不改变可见性/许可/无关设置，保留 v0.2.0.0 标签和附件。当前执行结果将在本节收尾记录。
+- 正式目录固定为 `artifacts/ScopedImport-0.2.0.1`：ZIP、外部 SHA256、可安装子目录、build-manifest.json、RELEASE_NOTES.md 与 verification 下的脱敏验证摘要/测试版清单/差异报告。
+- 正式 ZIP SHA256=`cc33698f511295c0e725639b360d060e345b071a4e561d9dc718cdb4cf4d43ef`；DLL SHA256=`0b75b31045bb9251e9ce1558247261d3d436215ba427488a3a641a2265981898`。实际程序集/文件/产品版本为 0.2.0.1，PE getter 中的 GUID 与目标 ABI 已核实。
+- 正式 DLL 与用户测试 DLL 不同：335 个方法的 IL、签名、局部变量/异常区域全部相同；两项嵌入资源仅去除“本地测试版”字样，信息版本后缀由起始 HEAD 改为修复源码提交。没有额外业务逻辑或页面脚本变化，ZIP 仅同步正式文档。该差异已记录在 verification/tested-versus-final.json，不能称为用户直接测试过最终 DLL 字节。
+- 构建源码提交 `32debae21e76193a2255ec6c47d12d85710205b3`；AGENTS 独立规则提交 `a3991d1826915bf6fad7064d7a6961ed499c7d0d`，只纳入此前审阅差异。此后仅更新 PROJECT 验证/发布结果，标签源码的 src/依赖锁与构建一致。
+- 仅在远程正式附件核验完成后清理其他 artifacts 子项；不跟随重解析点，不触及 .local、tests、Git 或仓库外备份。
+- 发布按正常快进推送、v0.2.0.1 标签、Draft 上传/下载摘要核验后转正式 Latest；不强推、不覆盖不同身份版本，不改变可见性/许可/无关设置，保留 v0.2.0.0 标签和附件。正式包本地校验完成，正在执行推送及 Draft 附件验证；发布和清理结果将在本节收尾记录。
 
 ## 下一步
 
