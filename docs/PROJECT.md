@@ -1,6 +1,6 @@
 # 当前技术状态
 
-更新：2026-10-16。当前版本 **0.2.0.1**，本轮按用户明确授权完成正式版本构建和 GitHub 发布流程；发布及清理结果在本页的正式产物节记录。仓库：[gok2023/jellyfin-scoped-import](https://github.com/gok2023/jellyfin-scoped-import)，Public，main。起始 HEAD 为 a3d0e470f119f1c5784d6e1cf928ab86cb48b7b6，先前未提交修复均属本次范围。生产服务、数据库、凭据和媒体未访问，不重写历史、不强推。
+更新：2026-10-16。当前版本 **0.2.0.1**，本轮已按用户明确授权完成正式构建、GitHub v0.2.0.1 正式 Latest 发布与 artifacts 限定清理；结果见正式产物节。仓库：[gok2023/jellyfin-scoped-import](https://github.com/gok2023/jellyfin-scoped-import)，Public，main。起始 HEAD 为 a3d0e470f119f1c5784d6e1cf928ab86cb48b7b6，先前未提交修复均属本次范围。生产服务、数据库、凭据和媒体未访问，不重写历史、不强推。
 
 ## 当前版本、身份和许可
 
@@ -49,7 +49,12 @@ ScopedImport 在 Jellyfin 内运行，由管理员提交具体路径，后台单
 - 正式 DLL 与用户测试 DLL 不同：335 个方法的 IL、签名、局部变量/异常区域全部相同；两项嵌入资源仅去除“本地测试版”字样，信息版本后缀由起始 HEAD 改为修复源码提交。没有额外业务逻辑或页面脚本变化，ZIP 仅同步正式文档。该差异已记录在 verification/tested-versus-final.json，不能称为用户直接测试过最终 DLL 字节。
 - 构建源码提交 `32debae21e76193a2255ec6c47d12d85710205b3`；AGENTS 独立规则提交 `a3991d1826915bf6fad7064d7a6961ed499c7d0d`，只纳入此前审阅差异。此后仅更新 PROJECT 验证/发布结果，标签源码的 src/依赖锁与构建一致。
 - 仅在远程正式附件核验完成后清理其他 artifacts 子项；不跟随重解析点，不触及 .local、tests、Git 或仓库外备份。
-- 发布按正常快进推送、v0.2.0.1 标签、Draft 上传/下载摘要核验后转正式 Latest；不强推、不覆盖不同身份版本，不改变可见性/许可/无关设置，保留 v0.2.0.0 标签和附件。正式包本地校验完成，正在执行推送及 Draft 附件验证；发布和清理结果将在本节收尾记录。
+- 发布按正常快进推送、v0.2.0.1 标签、Draft 上传/下载摘要核验后转正式 Latest；不强推、不覆盖不同身份版本，不改变可见性/许可/无关设置，保留 v0.2.0.0 标签和附件。发布完成：[v0.2.0.1 Release](https://github.com/gok2023/jellyfin-scoped-import/releases/tag/v0.2.0.1)，Release ID=414037651，非 Draft、非 Prerelease，Latest 已核实。标签指向 `9811dd86ccfd46fbfec083ecac7adc30f8b553cc`（正式验证文档提交），其 src/依赖锁与构建提交相同。
+- 两个附件分别为 `ScopedImport-0.2.0.1-jf10.11.11.zip`（69,212 字节）和 `.zip.sha256`（102 字节）。Draft 上传后按大小/摘要和实际下载逐项核对，发布后再次匿名下载并比对字节，均与本地一致。Draft 的按标签 API 曾返回 404，随后按列表及同一 Release ID 核实身份继续，未重复创建。
+- 正常快进推送 main 与新注释标签，没有历史重写或强推。GitHub 仓库仍为 Public、主页为空、许可证未改；简介与 jellyfin/jellyfin-plugin/metadata/media-library/csharp topics 按实际功能完善。
+- 历史 v0.2.0.0 Release ID=412604971，两项附件 ID=640072087/640072090、大小及 SHA256 与发布前一致，未删除或覆盖。
+- 远程正式附件验证后才清理 artifacts：删除 20 个子项（9 个临时 build、10 个合成 fixture、1 份旧本地产物），507 个普通文件共 4,464,924 逻辑字节；只解除 7 个指向 artifacts 内合成测试目录的联接节点，不跟随联接，随后确认无残余重解析点才递归删除普通目录。正式目录完整保留，DLL/ZIP 哈希前后相同。artifacts 最终只有 ScopedImport-0.2.0.1，未清理其外文件、.local、tests 或 Git。
+- 正式目录的 verification 保留测试版清单、335 方法差异比较、107 检查摘要、Release 验证、清理前脱敏清单及清理结果。旧 build-* 路径不再可用，关键追溯证据已转存该正式目录。后续仅以中文文档提交同步发布结果，不改变标签或发布二进制。
 
 ## 下一步
 
@@ -57,7 +62,7 @@ ScopedImport 在 Jellyfin 内运行，由管理员提交具体路径，后台单
 
 ## 历史记录说明
 
-以下保留截至 0.2.0.0 的初始化、公开及退役事实；其中“本轮”指当时阶段，旧 artifacts 路径只是历史证据来源，不覆盖上文 0.2.0.1 当前状态。发布收尾将提取必要脱敏摘要，再清理旧临时产物。
+以下保留截至 0.2.0.0 的初始化、公开及退役事实；其中“本轮”指当时阶段，旧 artifacts 路径只是历史证据来源，不覆盖上文 0.2.0.1 当前状态。本次已提取必要脱敏摘要并完成旧临时产物清理。
 
 ## GitHub初始化记录（历史Private阶段）
 
