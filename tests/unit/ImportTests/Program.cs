@@ -25,6 +25,67 @@ async Task Test(string name, Func<Task> test) { await test(); count++; Console.W
 void Throws<T>(Action action) where T : Exception { try { action(); } catch (T) { return; } throw new Exception("Expected " + typeof(T).Name); }
 Harness New() => new(Path.Combine(fixtureRoot, Guid.NewGuid().ToString("N")));
 string Meta(JsonElement status) => status.GetProperty("Movies")[0].GetProperty("MetadataStatus").GetString()!;
+await Test("native folder picker resolves configured locations, validates results and serializes STA requests", async () =>
+{
+    if (!OperatingSystem.IsWindows()) throw new PlatformNotSupportedException();
+    var root = Path.Combine(fixtureRoot, "动漫");
+    var second = Path.Combine(fixtureRoot, "第二目录");
+    var movies = Path.Combine(fixtureRoot, "电影");
+    var show = Path.Combine(root, "生活 大爆炸", new string('长', 140), new string('路', 140));
+    Directory.CreateDirectory(show);
+    Directory.CreateDirectory(second);
+    Directory.CreateDirectory(movies);
+    var animeId = Guid.NewGuid();
+    var movieId = Guid.NewGuid();
+    var library = Stub.Make<ILibraryManager>((method, _) => method.Name == "GetVirtualFolders"
+        ? new List<VirtualFolderInfo>
+        {
+            new() { ItemId = animeId.ToString("N"), Name = "漫", Locations = [root, second], CollectionType = CollectionTypeOptions.tvshows },
+            new() { ItemId = movieId.ToString("N"), Name = "电影", Locations = [movies], CollectionType = CollectionTypeOptions.movies }
+        }
+        : throw new InvalidOperationException(method.Name));
+    var context = new Microsoft.AspNetCore.Http.DefaultHttpContext();
+    context.Connection.RemoteIpAddress = System.Net.IPAddress.Loopback;
+    var controller = new ScopedImport.Controller(null!, library, null!) { ControllerContext = new() { HttpContext = context } };
+    async Task<FolderPicker.Result> Pick(FolderPickRequest request, Func<string, CancellationToken, string?> mock,
+        CancellationToken token = default) =>
+        (FolderPicker.Result)((Microsoft.AspNetCore.Mvc.OkObjectResult)await controller.PickFolderCore(request, token, mock)).Value!;
+
+    Assert(await Pick(new(animeId, 0, show), (start, _) =>
+    {
+        Assert(Thread.CurrentThread.GetApartmentState() == ApartmentState.STA && start == show, "valid long preferred directory on STA");
+        return show;
+    }) is { Status: "Selected", Path: var path } && path == show, "selected absolute path");
+    Assert(await Pick(new(animeId, 1, root), (start, _) =>
+        start == second ? null : throw new Exception("wrong configured location")) is { Status: "Cancelled" }, "second location and cancellation");
+    Assert(await Pick(new(movieId, 0, Path.Combine(movies, "不存在")), (start, _) =>
+        start == movies ? null : throw new Exception("wrong library root")) is { Status: "Cancelled" }, "invalid default fallback");
+    foreach (var invalid in new[] { movies, Path.Combine(root, "..", "电影"), Path.Combine(root, "NUL"), @"\\?\C:\" })
+        Assert(await Pick(new(animeId, 0), (_, _) => invalid) is { Status: "Error", Path: null }, "invalid returned path");
+    Assert(await Pick(new(animeId, 0), (_, _) => throw new InvalidOperationException()) is
+        { Status: "Error", Message: var message } && message!.Contains("交互桌面"), "desktop error");
+
+    using var disconnected = new CancellationTokenSource();
+    var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    var first = Pick(new(animeId, 0), (_, token) =>
+    {
+        started.SetResult();
+        token.WaitHandle.WaitOne(TimeSpan.FromSeconds(5));
+        return show;
+    }, disconnected.Token);
+    try
+    {
+        await started.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert(await Pick(new(movieId, 0), (_, _) => throw new Exception("second dialog opened")) is { Status: "Busy" }, "single window");
+    }
+    finally { disconnected.Cancel(); }
+    Assert(await first is { Status: "Cancelled" }, "disconnect discards result");
+    Assert(await controller.PickFolderCore(new(Guid.NewGuid(), 0), default, (_, _) => null)
+        is Microsoft.AspNetCore.Mvc.BadRequestObjectResult, "unknown library");
+    context.Connection.RemoteIpAddress = System.Net.IPAddress.Parse("192.0.2.10");
+    Assert(await controller.PickFolderCore(new(animeId, 0), default, (_, _) => null)
+        is Microsoft.AspNetCore.Mvc.ObjectResult { StatusCode: 403 }, "remote request refused");
+});
 await Test("operation status missing contract and successful status remain distinguishable", async () =>
 {
     var h=New();var importer=(Importer)typeof(Harness).GetField("importer",BindingFlags.NonPublic|BindingFlags.Instance)!.GetValue(h)!;
@@ -101,6 +162,10 @@ await Test("NFO junction path remains fatal", () =>
     var start=new System.Diagnostics.ProcessStartInfo("pwsh"){UseShellExecute=false,CreateNoWindow=true};start.ArgumentList.Add("-NoProfile");start.ArgumentList.Add("-EncodedCommand");start.ArgumentList.Add(Convert.ToBase64String(Encoding.Unicode.GetBytes(command)));
     using var process=System.Diagnostics.Process.Start(start)!;process.WaitForExit();
     Assert(process.ExitCode==0 && File.GetAttributes(link).HasFlag(FileAttributes.ReparsePoint),"fixture junction unavailable");
+    if (!OperatingSystem.IsWindows()) throw new PlatformNotSupportedException();
+    var pick = FolderPicker.Pick(fixtureRoot, link, default, (start, _) =>
+        start == fixtureRoot ? link : throw new InvalidOperationException("junction was used as default")).GetAwaiter().GetResult();
+    Assert(pick is { Status: "Error", Message: var message } && message!.Contains("重解析点"), "picker rejects a junction");
     Throws<IOException>(()=>Importer.ReadNfo(Path.Combine(link,"movie.nfo"),new(Guid.NewGuid())));
     return Task.CompletedTask;
 });

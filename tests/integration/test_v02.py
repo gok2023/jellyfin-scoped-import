@@ -6,7 +6,7 @@ from support.lab import connect
 
 def run():
     connect()
-    assert lab.require('GET','/ScopedImport/Libraries')['Version']=='0.2.0.1'
+    assert lab.require('GET','/ScopedImport/Libraries')['Version']=='0.2.0.2'
     report={'cases':[],'status':'running','production_accessed':False}
     output=lab.ROOT/'evidence/scoped-v02.json'
     def save():output.write_text(json.dumps(report,ensure_ascii=False,indent=2),encoding='utf-8')

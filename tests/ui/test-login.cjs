@@ -14,7 +14,7 @@ async function run(responses,href='http://127.0.0.1:8096/ScopedImport/App'){
  let r=await run([{body:{AccessToken:'mock-token',ServerId:'fixture-server'}},{body:{Ready:true}}]);
  assert.equal(r.elements.connection.textContent,'已连接，追加保护已启用。');
  assert.equal(r.requests[1].headers['X-Emby-Token'],'mock-token');
- assert.match(r.requests[1].headers.Authorization,/Version="0\.2\.0\.1"/);
+ assert.match(r.requests[1].headers.Authorization,/Version="0\.2\.0\.2"/);
  assert.equal(JSON.parse(r.requests[0].body).Username,'admin');
  assert.equal(JSON.parse(r.requests[0].body).Pw,'mock password');
  assert.equal(r.elements.password.value,'');

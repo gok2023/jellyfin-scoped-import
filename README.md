@@ -2,7 +2,7 @@
 
 把指定路径下缺失的电影或剧集追加到已有 Jellyfin 媒体库，适合新增少量媒体时由管理员手动入库。插件在 Jellyfin 内运行，无需 Python 常驻助手。
 
-当前正式版本 **0.2.0.1**，仅针对 **Windows x64 + 原版 Jellyfin 10.11.11（ABI 10.11.11.0）**。这是第三方插件，不是 Jellyfin 官方内置插件，也未加入官方插件目录。本版本通过 107 个离线用例/检查组；用户报告修复版实际测试通过、没有发现问题，但未提供逐项测试清单。自建隔离宿主集成、全进程 I/O 等验证仍未完成，使用前请备份。
+当前源码版本 **0.2.0.2**，面向 **Windows x64 + 原版 Jellyfin 10.11.11（ABI 10.11.11.0）**。这是第三方插件。0.2.0.2 提供本地安装包，GitHub 上的已发布版本仍为 0.2.0.1。
 
 ## 主要功能与工作原理
 
@@ -20,36 +20,27 @@
 
 普通媒体库扫描用于发现和更新库内容；ScopedImport 用于按指定路径追加缺失条目，不负责同步整个库、删除失效条目或修复已有条目的元数据。插件不会主动调用普通全库扫描、父级刷新或完整元数据刷新作为失败兜底，但 Jellyfin 后台任务、其他插件及媒体探测仍可能产生其他 I/O，不能据此保证整个进程只访问输入目录。
 
-## 正式产物
-
-[v0.2.0.1 Release](https://github.com/gok2023/jellyfin-scoped-import/releases/tag/v0.2.0.1) 提供完整可安装插件及配套文档；不包含 Jellyfin 服务端、SDK、FFmpeg 或测试依赖。
-
-本地正式目录为 `artifacts/ScopedImport-0.2.0.1/`，包含安装 ZIP、`.sha256`、可直接安装的 `ScopedImport_0.2.0.1/`（DLL 和 meta.json）、最终构建清单及脱敏验证摘要。DLL、meta、API 和页面版本均为 0.2.0.1，GUID 和目标 ABI 保持不变。
-
-## 从 GitHub Releases 手动安装
+## 安装包与手动安装
 
 ### 1. 选择正确的安装包
 
-打开 [Releases 页面](https://github.com/gok2023/jellyfin-scoped-import/releases)，选择 [v0.2.0.1](https://github.com/gok2023/jellyfin-scoped-import/releases/tag/v0.2.0.1)。历史 v0.2.0.0 的标签和附件继续保留。
+本地运行 `pwsh -NoProfile -File scripts/build.ps1` 后，安装包 `ScopedImport-0.2.0.2-jf10.11.11.zip` 和可直接复制的 `ScopedImport_0.2.0.2/` 位于对应的 `artifacts/build-*/` 目录。该目录同时包含外部 ZIP 校验文件。
 
-在该版本的 **Assets** 下载：
-
-- [ScopedImport-0.2.0.1-jf10.11.11.zip](https://github.com/gok2023/jellyfin-scoped-import/releases/download/v0.2.0.1/ScopedImport-0.2.0.1-jf10.11.11.zip)：可安装插件。
-- [ScopedImport-0.2.0.1-jf10.11.11.zip.sha256](https://github.com/gok2023/jellyfin-scoped-import/releases/download/v0.2.0.1/ScopedImport-0.2.0.1-jf10.11.11.zip.sha256)：ZIP 校验文件。
+已发布旧版可从 [v0.2.0.1 Release](https://github.com/gok2023/jellyfin-scoped-import/releases/tag/v0.2.0.1) 下载。
 
 GitHub 自动生成的 **Source code (zip)** / **Source code (tar.gz)** 是源码归档，不含可直接安装的插件 DLL。不要将它们解压到插件目录。
 
 在下载目录用 PowerShell 计算摘要，与 `.sha256` 文件中的摘要逐字核对：
 
 ```powershell
-Get-FileHash -LiteralPath .\ScopedImport-0.2.0.1-jf10.11.11.zip -Algorithm SHA256
-Get-Content -LiteralPath .\ScopedImport-0.2.0.1-jf10.11.11.zip.sha256
+Get-FileHash -LiteralPath .\ScopedImport-0.2.0.2-jf10.11.11.zip -Algorithm SHA256
+Get-Content -LiteralPath .\ScopedImport-0.2.0.2-jf10.11.11.zip.sha256
 ```
 
 当前 ZIP 实际包含七个文件：
 
 ```text
-ScopedImport_0.2.0.1/
+ScopedImport_0.2.0.2/
   ScopedImport.dll
   meta.json
 README.md
@@ -59,7 +50,7 @@ LICENSE
 SHA256SUMS.txt
 ```
 
-ZIP 内的 `SHA256SUMS.txt` 校验插件 DLL；外部 `.zip.sha256` 校验整个 ZIP。包不含 Jellyfin 服务端、参考 DLL、SDK 或测试插件。历史 v0.2.0.0 ZIP 保留当时的 Private 状态说明；本次发布使用独立的 0.2.0.1 附件，不覆盖旧附件。当前证据见 [PROJECT](docs/PROJECT.md)。
+ZIP 内的 `SHA256SUMS.txt` 校验插件 DLL；外部 `.zip.sha256` 校验整个 ZIP。包不含 Jellyfin 服务端、参考 DLL、SDK 或测试插件。当前证据见 [PROJECT](docs/PROJECT.md)。
 
 ### 2. 确认该实例的真实数据目录
 
@@ -79,14 +70,14 @@ ZIP 内的 `SHA256SUMS.txt` 校验插件 DLL；外部 `.zip.sha256` 校验整个
 
 1. 等待正在进行的入库操作结束，再完全停止该 Jellyfin 实例（Windows 服务停止对应服务；托盘版停止/退出服务器），确认服务器进程已退出。
 2. 备份该实例的数据目录、配置目录及旧插件目录，保留可恢复的数据库备份。配置目录若单独设置也要备份；不要在进程写入时只复制单个数据库文件。
-3. 将 ZIP 解压到临时目录，只把其中 `ScopedImport_0.2.0.1` 文件夹复制到 `<实际数据目录>\plugins`。根部的说明和许可文件保留供阅读，无需放入插件目录。
+3. 将 ZIP 解压到临时目录，只把其中 `ScopedImport_0.2.0.2` 文件夹复制到 `<实际数据目录>\plugins`。根部的说明和许可文件保留供阅读，无需放入插件目录。
 4. 升级时先将所有旧 ScopedImport 目录或散放的旧 `ScopedImport.dll` 移到插件目录之外的备份位置，避免同时加载多个版本。只处理此插件，不覆盖其他插件。
 
 安装后的层级必须是：
 
 ```text
-<实际数据目录>\plugins\ScopedImport_0.2.0.1\ScopedImport.dll
-<实际数据目录>\plugins\ScopedImport_0.2.0.1\meta.json
+<实际数据目录>\plugins\ScopedImport_0.2.0.2\ScopedImport.dll
+<实际数据目录>\plugins\ScopedImport_0.2.0.2\meta.json
 ```
 
 DLL 和 `meta.json` 在同一层。不要多套一层 ZIP 名称目录，也不要将 DLL 放进 `plugins\configurations`。确保 Jellyfin 运行账户有读取权限。
@@ -100,6 +91,8 @@ DLL 和 `meta.json` 在同一层。不要多套一层 ZIP 名称目录，也不�
 5. HTTP 202 只表示排队；查看完成、拒绝或部分完成结果。电影结果区分“条目已创建”、部分元数据已获取、无匹配、没有可用提供器、提供器失败/超时和已有条目跳过。已创建不代表完整刮削成功。网络中断或超时时先重新查询操作，不在状态未知时重复提交；两套页面在已知操作查询失败时保留编号并禁止重复提交，确认终态后释放按钮。操作状态在内存中，重启后不能继续查询原任务。
 6. 电影需要手动识别时，点击结果中的“打开该电影详情”，再在更多菜单点击“刮削元数据”，输入名称、年份或提供器 ID。链接只打开对应 ItemId 的详情页；Jellyfin Web 若要求登录，请正常使用管理员账户登录，必要时返回结果再次打开。链接不携带登录令牌，也不自动选择或提交匹配。重新提交已有电影会跳过写入并给出同样的指引。
 7. 若收到插件确认的“记录已失效，原操作结果无法从该记录确认”，请先理解这不代表原任务失败或没有写入。点击“结束旧编号跟踪并检查就绪状态”，通过就绪检查后再自行决定是否提交新任务；页面不会自动重发，服务端任务锁和已有项检查继续生效。普通网络失败、401/403、代理层 404 或服务故障不会作为记录失效而解锁。
+
+在 Jellyfin 所在的 Windows 电脑打开管理页或独立页。点击路径框右侧的文件夹图标，选择媒体库及其配置目录，Windows 原生窗口会从该目录打开。选择并确认后完整路径自动回填，取消会保留原值。右上角设置可在当前浏览器保存默认目录，按服务器和可用的登录用户身份隔离。有效的默认子目录优先使用，其他默认位置回退到所选媒体库根目录。服务进程需要能访问已解锁的交互桌面。窗口不可用时，可以手动粘贴完整路径。路径填好后再点击“定向入库”。操作编号、文件访问和提供器明细位于“查看详情”。
 
 操作编号按服务器地址（含基础路径）和服务器身份存储，同一实例的两套页面共用。旧版未绑定服务器的编号不会自动查询或归属到当前实例；请确认归属后再点击查询，或显式结束旧跟踪。结束跟踪不会取消服务端任务，也不能找回已丢失的结果。使用旧版服务端返回的裸 404 时，页面无法确认失效，须先检查插件/页面版本和代理地址再查询。
 

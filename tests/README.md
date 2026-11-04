@@ -1,6 +1,6 @@
 # 测试说明
 
-测试仅覆盖当前 ScopedImport 0.2.0.1，不依赖旧 Python 助手、ReadOnlyPlanner 或 AppendProbe 工程。
+测试仅覆盖当前 ScopedImport 0.2.0.2，不依赖旧 Python 助手、ReadOnlyPlanner 或 AppendProbe 工程。
 
 ## 离线检查
 

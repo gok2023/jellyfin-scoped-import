@@ -4,13 +4,14 @@ const tick=()=>new Promise(resolve=>setImmediate(resolve));
 const key=(base,server='fixture-server')=>'scoped-operation:v2:'+encodeURIComponent(base)+':'+encodeURIComponent(server.toLowerCase());
 const missing=(id=oldId)=>({status:404,body:{Code:'ScopedImport.OperationNotFound',OperationId:id}});
 const state=(id=newId,terminal=false)=>({Id:id,State:terminal?'Completed':'Metadata',Message:'fixture',Created:[],Skipped:[],Warnings:[],MetadataProviders:[],Movies:[],EnumeratedDirectories:[],ReadFiles:[]});
-async function setup(kind,{base='https://fixture.invalid/jellyfin/',server='fixture-server',storage=new Map(),lookup=missing(),ready=true}={}){
- const nodes={},calls=[],scheduled=[];let lookupReply=lookup,readyReply={Ready:ready},postReply={status:202,body:{OperationId:newId}},terminal=false;
+async function setup(kind,{base='https://fixture.invalid/jellyfin/',server='fixture-server',storage=new Map(),lookup=missing(),ready=true,preferences=new Map(),pick=null,libraries=[]}={}){
+ const nodes={},calls=[],scheduled=[];let lookupReply=lookup,readyReply={Ready:ready,Libraries:libraries},postReply={status:202,body:{OperationId:newId}},terminal=false;
  const html=fs.readFileSync(__dirname+'/../../src/ScopedImport/'+(kind==='app'?'app.html':'import.html'),'utf8');
- const get=id=>nodes[id]??={value:'',hidden:new RegExp('id="'+id+'"[^>]*\\bhidden\\b').test(html),disabled:false,textContent:'',children:[],listeners:{},addEventListener(e,f){this.listeners[e]=f;},replaceChildren(...items){this.children=items;},appendChild(e){this.children.push(e);}};
+ const get=id=>nodes[id]??={value:'',hidden:new RegExp('id="'+id+'"[^>]*\\bhidden\\b').test(html),disabled:false,textContent:'',children:[],listeners:{},addEventListener(e,f){this.listeners[e]=f;},showModal(){this.open=true;},close(){this.open=false;this.listeners.close?.();},replaceChildren(...items){this.children=items;},appendChild(e){this.children.push(e);}};
  const page={listeners:{},querySelector:id=>get(id.slice(1)),addEventListener(e,f){this.listeners[e]=f;}};
  const respond=async(method,url,body)=>{
-  calls.push({method,url,body});const path=new URL(url).pathname;
+  calls.push({method,url,body});const parsed=new URL(url),path=parsed.pathname;
+  if(method==='POST'&&path.endsWith('/PickFolder')&&pick)return pick(JSON.parse(body));
   if(path.endsWith('/AuthenticateByName'))return{status:200,body:{AccessToken:'mock-token',ServerId:server}};
   if(path.endsWith('/Libraries'))return readyReply instanceof Error||readyReply.status?readyReply:{status:200,body:readyReply};
   if(method==='POST'&&path.endsWith('/Import'))return postReply;
@@ -18,7 +19,7 @@ async function setup(kind,{base='https://fixture.invalid/jellyfin/',server='fixt
   if(path.includes('/Operations/'))return lookupReply;
   throw Error('Unexpected request '+url);
  };
- const context={URL,document:{getElementById:get,querySelector:()=>page,createElement:()=>get('created-'+Math.random())},sessionStorage:{getItem:k=>storage.get(k)||null,setItem:(k,v)=>storage.set(k,v),removeItem:k=>storage.delete(k)},setTimeout:f=>{scheduled.push(f);return f;},clearTimeout:f=>{const i=scheduled.indexOf(f);if(i>=0)scheduled.splice(i,1);}};
+ const context={URL,localStorage:{getItem:k=>preferences.get(k),setItem:(k,v)=>preferences.set(k,v)},document:{getElementById:get,querySelector:()=>page,createElement:()=>get('created-'+Math.random())},sessionStorage:{getItem:k=>storage.get(k)||null,setItem:(k,v)=>storage.set(k,v),removeItem:k=>storage.delete(k)},setTimeout:f=>{scheduled.push(f);return f;},clearTimeout:f=>{const i=scheduled.indexOf(f);if(i>=0)scheduled.splice(i,1);}};
  if(kind==='app'){
   class Xhr{open(method,url){this.method=method;this.url=url;}setRequestHeader(){}send(body){respond(this.method,this.url,body).then(r=>{if(r instanceof Error||r?.network||r&&'reject' in r){this.onerror();return;}this.status=r.status;this.responseText=typeof r.body==='string'?r.body:JSON.stringify(r.body);this.onload();});}}
   Object.assign(context,{location:{href:base+'ScopedImport/App'},XMLHttpRequest:Xhr});
@@ -42,6 +43,39 @@ async function setup(kind,{base='https://fixture.invalid/jellyfin/',server='fixt
  });
 
  for(const kind of ['app','config']){
+  await test(kind+' Windows picker success, cancellation, errors and no duplicate requests',async()=>{
+   const root=String.raw`H:\影视\动漫`,show=root+String.raw`\生活 大爆炸`,movies=String.raw`H:\影视\电影`;
+   const libraries=[{Name:'漫',Locations:[root],ItemId:oldId,CollectionType:'tvshows'},
+    {Name:'电影',Locations:[movies],ItemId:newId,CollectionType:'movies'}];
+   const preferences=new Map();
+   let reply,finish;
+   const pick=()=>reply??new Promise(resolve=>{finish=resolve;});
+   const options={preferences,libraries,pick},h=await setup(kind,options);
+   const input=h.get(kind==='app'?'path':'siPath'), folders=h.get('siFolders');
+   const result=(Status,Path,Message)=>({status:200,body:{Status,Path,Message}});
+   input.value='original';
+   await h.click(h.get('siBrowseOpen'));
+   assert.equal(folders.children.length,2);assert.match(folders.children[0].textContent,/漫.*动漫/);
+   const pending=folders.children[0].listeners.click();
+   await folders.children[1].listeners.click();
+   assert.equal(h.calls.filter(c=>c.url.endsWith('/PickFolder')).length,1);
+   assert.match(h.get('siBrowseStatus').textContent,/等待 Windows/);
+   finish(result('Cancelled'));await pending;
+   assert.equal(input.value,'original');assert.equal(h.get('siBrowser').open,false);
+   await h.click(h.get('siSettingsOpen'));
+   h.get('siDefaultPath').value=root;await h.click(h.get('siSettingsSave'));
+   const reloaded=await setup(kind,options);
+   reply=result('Error',null,'无法访问当前交互桌面');
+   await reloaded.click(reloaded.get('siBrowseOpen'));
+   await reloaded.click(reloaded.get('siFolders').children[1]);
+   assert.deepEqual(JSON.parse(reloaded.calls.at(-1).body),{LibraryId:newId,LocationIndex:0,PreferredPath:root});
+   assert.match(reloaded.get('siPickFeedback').textContent,/交互桌面/);
+   reply=result('Selected',show);
+   await h.click(h.get('siBrowseOpen'));await h.click(folders.children[0]);
+   assert.equal(input.value,show);assert.match(h.get('siTarget').textContent,/漫/);
+   assert.equal(h.posts().length,0);assert.equal(reloaded.posts().length,0);
+   await h.submit();assert.equal(JSON.parse(h.posts()[0].body).Path,show);
+  });
   await test(kind+' scoped missing record: repeated query, refresh, explicit end and new mode/id',async()=>{
    const base='https://fixture.invalid/jellyfin/',storage=new Map([[key(base),oldId]]),h=await setup(kind,{storage});
    assert.match(h.result().textContent,/记录已失效，原操作结果无法从该记录确认/);assert.equal(storage.get(key(base)),oldId);
@@ -51,7 +85,7 @@ async function setup(kind,{base='https://fixture.invalid/jellyfin/',server='fixt
    const beforeReady=refreshed.calls.filter(c=>c.url.endsWith('/Libraries')).length;
    await refreshed.click(refreshed.forget());assert.equal(refreshed.button().disabled,false);assert.equal(refreshed.calls.filter(c=>c.url.endsWith('/Libraries')).length,beforeReady+1);
    assert.equal(storage.has(key(base)),false);assert.equal(refreshed.posts().length,0);
-   refreshed.mode('local');await refreshed.submit();assert.equal(refreshed.posts().length,1);assert.equal(JSON.parse(refreshed.posts()[0].body).FetchMetadata,false);assert.equal(storage.get(key(base)),newId);assert.match(refreshed.result().textContent,new RegExp(newId));
+   refreshed.mode('local');await refreshed.submit();assert.equal(refreshed.posts().length,1);assert.equal(JSON.parse(refreshed.posts()[0].body).FetchMetadata,false);assert.equal(storage.get(key(base)),newId);assert.match(refreshed.get('siLog').textContent,new RegExp(newId));
    const afterSubmit=await setup(kind,{storage});assert.equal(afterSubmit.posts().length,0);assert.ok(afterSubmit.calls.some(c=>c.url.endsWith('/Operations/'+newId)));assert.equal(afterSubmit.button().disabled,true);
    refreshed.setTerminal();await refreshed.scheduled.shift()();await tick();refreshed.mode('library');await refreshed.submit();assert.equal(refreshed.posts().length,2);assert.equal(JSON.parse(refreshed.posts()[1].body).FetchMetadata,true);
   });

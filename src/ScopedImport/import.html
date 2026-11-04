@@ -1,13 +1,25 @@
 <!DOCTYPE html><html><head><title>定向入库</title></head><body>
 <div id="ScopedImportPage" data-role="page" class="page type-interior pluginConfigurationPage" data-require="emby-input,emby-button">
-<div data-role="content"><div class="content-primary"><h1>定向入库</h1>
-<p>输入新增电影或剧集目录。自动匹配媒体库，只追加缺失条目；已有条目跳过。</p>
-<p>0.2.0.1：支持普通视频、独立电影目录、S01E01、E01 单集目录或带季集编号 NFO 的电视剧。暂不支持 ISO、光盘、快捷方式、多版本电影。已有库必须完成初始化。</p>
-<form id="siForm"><div class="inputContainer"><label class="inputLabel" for="siPath">新增影视的完整路径</label><input is="emby-input" id="siPath" required placeholder="E:\Media\TV\ExampleShow" /></div>
-<div class="inputContainer"><label for="siMetadata">新条目的元数据</label><select id="siMetadata" style="display:block;position:static;opacity:1;pointer-events:auto;padding:10px;width:100%;color:inherit;background:#202b35"><option value="library">按 Jellyfin 媒体库设置获取（推荐）</option><option value="local">只读取本地 NFO，不联网刮削</option></select><p>遵循该媒体库启用的远程元数据提供器及优先级；已有条目仍跳过。</p></div>
+<div data-role="content"><div class="content-primary"><button type="button" id="siSettingsOpen" style="float:right" aria-label="设置" title="设置">⚙</button><h1 title="ScopedImport 0.2.0.2">定向入库</h1>
+<p>选择新增影视目录，自动匹配媒体库并添加缺失条目。</p>
+<form id="siForm"><div class="inputContainer"><label class="inputLabel" for="siPath">新增影视路径</label><div style="display:flex;align-items:center;gap:.5rem"><input is="emby-input" id="siPath" required placeholder="E:\Media\TV\ExampleShow" /><button type="button" id="siBrowseOpen" aria-label="浏览文件夹" title="浏览文件夹">📁</button></div><p id="siTarget" aria-live="polite"></p><p id="siPickFeedback" role="status"></p></div>
+<div class="inputContainer"><label for="siMetadata">新条目的元数据</label><select id="siMetadata" style="display:block;position:static;opacity:1;pointer-events:auto;padding:10px;width:100%;color:inherit;background:#202b35"><option value="library">按 Jellyfin 媒体库设置获取</option><option value="local">只读取本地 NFO，不联网刮削</option></select></div>
 <p><button is="emby-button" type="submit" id="siSubmit" disabled class="raised button-submit block"><span>定向入库</span></button></p></form>
 <button type="button" id="siResume" hidden>重新查询上次操作</button><button type="button" id="siForget" hidden>结束旧编号跟踪并检查就绪状态</button><div id="siMovies"></div>
 <pre id="siResult" style="white-space:pre-wrap;overflow-wrap:anywhere" aria-live="polite">正在检查插件保护状态……</pre>
+<details id="siDetails" hidden><summary>查看详情</summary><pre id="siLog" style="white-space:pre-wrap"></pre></details>
+<dialog id="siSettings" aria-label="定向入库设置" style="max-width:min(90vw,38rem);width:100%;background:#202b35;color:#eef3f9;border:1px solid #64748b;border-radius:.6rem;box-sizing:border-box">
+<label for="siDefaultPath">默认浏览目录</label><input id="siDefaultPath" placeholder="留空时从媒体库开始">
+<button type="button" id="siBrowseDefault">浏览</button>
+<p id="siSettingsStatus" role="status"></p>
+<button type="button" id="siSettingsSave">保存</button> <button type="button" id="siSettingsCancel">取消</button>
+</dialog>
+<dialog id="siBrowser" aria-label="选择媒体库" style="max-width:min(90vw,42rem);width:100%;background:#202b35;color:#eef3f9;border:1px solid #64748b;border-radius:.6rem;box-sizing:border-box">
+<h2>选择媒体库</h2>
+<p id="siBrowseStatus" role="status"></p>
+<div id="siFolders" style="display:grid;gap:.35rem;max-height:45vh;overflow:auto"></div>
+<button type="button" id="siBrowseCancel">取消</button>
+</dialog>
 <script>
 
 (function(){const page=document.querySelector('#ScopedImportPage');let timer=null,polling=false,operation=null,busy=false;
@@ -15,14 +27,92 @@ const output=page.querySelector('#siResult'),submitButton=page.querySelector('#s
 const serverBase=new URL(ApiClient.serverAddress().replace(/\/$/,'')+'/');serverBase.search='';serverBase.hash='';
 const serverIdentity=()=>ApiClient.serverId();
 function onAuthError(error){if(['Unauthorized','Forbidden'].includes(error.kind))ready=false;}
-function renderAccess(){}
 async function api(route,method='GET',body){
- try{const data=await ApiClient.ajax({type:method,url:ApiClient.getUrl(route),dataType:'json',contentType:'application/json',data:body?JSON.stringify(body):undefined});if(!data||typeof data!=='object')throw failure('InvalidResponse');return data;}
+ try{const data=await ApiClient.ajax({type:method,url:ApiClient.getUrl(route),timeout:route==='ScopedImport/PickFolder'?660000:undefined,dataType:'json',contentType:'application/json',data:body?JSON.stringify(body):undefined});if(!data||typeof data!=='object')throw failure('InvalidResponse');return data;}
  catch(error){if(error?.kind)throw error;if(error?.name==='SyntaxError')throw failure('InvalidResponse');
   let data;try{data=error?.responseJSON??(typeof error?.json==='function'?await error.json():JSON.parse(error?.responseText));}catch{}
   throw httpFailure(Number(error?.status)||0,data,route);
  }
 }
+
+const getElement=id=>page.querySelector('#'+id);
+let libraries=[];
+function attachBrowser(get, input, userIdentity) {
+ const dialog=get('siBrowser'), settings=get('siSettings'), status=get('siBrowseStatus');
+ const list=get('siFolders'), cancel=get('siBrowseCancel'), feedback=get('siPickFeedback');
+ const defaultPath=get('siDefaultPath'), settingsStatus=get('siSettingsStatus');
+ let waiting=false;
+ const key=()=> 'scoped-browse:v1:'+JSON.stringify([serverBase.href,serverIdentity(),userIdentity()]);
+ function saved(){try{return localStorage.getItem(key())||'';}catch{return '';}}
+ function supported(library){return ['movies','tvshows'].includes(String(library.CollectionType).toLowerCase());}
+
+ function open(destination){
+  if(!ready||waiting||dialog.open)return;
+  feedback.textContent='';status.textContent='';
+  const entries=libraries.filter(supported).flatMap(library=>(library.Locations||[]).map((path,index)=>{
+   const button=document.createElement('button');
+   button.type='button';
+   button.textContent=library.Name+' · '+path;
+   button.addEventListener('click',async()=>{
+    if(waiting||!dialog.open)return;
+    const identity=key();
+    waiting=true;cancel.disabled=true;
+    for(const entry of entries)entry.disabled=true;
+    status.textContent='正在等待 Windows 文件夹选择窗口，请在桌面完成或取消。';
+    try{
+     const result=await api('ScopedImport/PickFolder','POST',{
+      LibraryId:library.ItemId,LocationIndex:index,PreferredPath:saved()||null
+     });
+     if(key()!==identity||!dialog.open)return;
+     if(result.Status==='Selected'&&typeof result.Path==='string'&&result.Path){
+      destination.value=result.Path;
+      if(destination===input)matchLibrary();
+     }else if(result.Status!=='Cancelled'){
+      (destination===input?feedback:settingsStatus).textContent=result.Message||'无法打开 Windows 文件夹选择窗口，请手动粘贴路径。';
+     }
+    }catch(error){
+     if(key()===identity&&dialog.open)(destination===input?feedback:settingsStatus).textContent=
+      error.pickMessage||'未收到 Windows 文件夹选择结果，请关闭桌面窗口后重试，或手动粘贴路径。';
+    }finally{
+     waiting=false;cancel.disabled=false;
+     if(dialog.open)dialog.close();
+    }
+   });
+   return button;
+  }));
+  list.replaceChildren(...entries);
+  if(!entries.length)status.textContent='没有可选择的电影或电视剧媒体库。';
+  dialog.showModal();
+ }
+ get('siBrowseOpen').addEventListener('click',()=>open(input));
+ get('siBrowseDefault').addEventListener('click',()=>open(defaultPath));
+ cancel.addEventListener('click',()=>{if(!waiting)dialog.close();});
+ dialog.addEventListener('cancel',event=>{if(waiting)event.preventDefault();});
+ get('siSettingsOpen').addEventListener('click',()=>{
+  if(!ready||settings.open)return;
+  defaultPath.value=saved();settingsStatus.textContent='';settings.showModal();
+ });
+ get('siSettingsCancel').addEventListener('click',()=>settings.close());
+ get('siSettingsSave').addEventListener('click',()=>{
+  try{localStorage.setItem(key(),defaultPath.value.trim());settings.close();}
+  catch{settingsStatus.textContent='无法保存默认目录，请检查浏览器存储权限。';}
+ });
+ function matchLibrary(){
+  const normalize=path=>path.trim().replaceAll('/',String.fromCharCode(92)).replace(/\\+$/,'').toLowerCase();
+  const path=normalize(input.value);
+  const matches=libraries.flatMap(library=>{
+   const kind=String(library.CollectionType).toLowerCase();
+   if(!['movies','tvshows'].includes(kind))return [];
+   return (library.Locations||[]).map(normalize).filter(root=>root&&(path===root||path.startsWith(root+String.fromCharCode(92))))
+    .map(root=>({root,label:library.Name+(kind==='movies'?'（电影）':'（电视剧）')}));
+  });
+  const match=matches.length===1?matches[0]:null;
+  get('siTarget').textContent=match?(match.root===path?'请选择具体影视目录，不能直接添加整个媒体库。':'目标媒体库：'+match.label):'';
+ }
+ input.addEventListener('input',matchLibrary);
+ return matchLibrary;
+}
+const matchLibrary=attachBrowser(getElement,page.querySelector('#siPath'),()=>ApiClient.getCurrentUserId?.());
 
 const metadataLabels={LocalOnly:'仅本地处理，未调用远程提供器',FetchedFields:'已获取部分元数据；未执行完整刮削、远程图片或演员流程',NoMatch:'无匹配，等待手动识别',ProvidersUnavailable:'未启用或没有可用远程提供器，等待手动识别',ProviderFailed:'提供器失败，等待手动识别',ProviderTimeout:'提供器超时，等待手动识别',ExistingSkipped:'已有条目已跳过，元数据未经本次检查；不完整时请手动识别'};
 const providerLabels={Metadata:'返回元数据',NoMetadata:'无匹配',Error:'失败',Timeout:'超时'};
@@ -46,7 +136,9 @@ function httpFailure(status,body,route){
  const prefix='ScopedImport/Operations/',id=route.startsWith(prefix)?decodeURIComponent(route.slice(prefix.length)):null;
  const sameId=(a,b)=>typeof a==='string'&&typeof b==='string'&&a.replace(/-/g,'').toLowerCase()===b.replace(/-/g,'').toLowerCase();
  const confirmed=status===404&&id&&body&&body.Code==='ScopedImport.OperationNotFound'&&sameId(body.OperationId,id);
- return failure(confirmed?'OperationNotFound':status===401?'Unauthorized':status===403?'Forbidden':status===404?'EndpointNotFound':status>=500?'ServiceError':status===0?'Network':'HttpError',status);
+ const error=failure(confirmed?'OperationNotFound':status===401?'Unauthorized':status===403?'Forbidden':status===404?'EndpointNotFound':status>=500?'ServiceError':status===0?'Network':'HttpError',status);
+ if(route==='ScopedImport/PickFolder')error.pickMessage=body?.Message;
+ return error;
 }
 function errorText(error){
  switch(error.kind){
@@ -75,6 +167,7 @@ function removeTracking(){
 function legacyNotice(){output.textContent='发现旧版未绑定服务器的操作编号：'+operation+'。无法确认其归属，尚未向当前服务器查询。确认归属后可点击查询，或显式结束旧编号跟踪；结束跟踪不取消服务端任务，也不代表任务失败或没有写入。';}
 function controls(){
  submitButton.disabled=!ready||busy;
+ getElement('siBrowseOpen').disabled=!ready;getElement('siSettingsOpen').disabled=!ready;
  resumeButton.hidden=!operation&&ready;
  resumeButton.disabled=polling||checking;
  resumeButton.textContent=legacy?'确认归属并在此服务器查询旧编号':operation?'重新查询上次操作':'重新检查连接与就绪状态';
@@ -84,6 +177,7 @@ function controls(){
 async function checkReady(prefix=''){
  if(checking)return false;checking=true;ready=false;controls();
  try{const health=await api('ScopedImport/Libraries');
+  libraries=health.Libraries||[];matchLibrary();
   if(health.Ready!==true){output.textContent=prefix+'追加保护未启用；仅支持 Jellyfin 10.11.11 原版存储服务。新任务入口保持关闭。';return false;}
   ready=true;return true;
  }catch(error){onAuthError(error);output.textContent=prefix+'就绪检查失败：'+errorText(error);return false;}
@@ -93,15 +187,21 @@ async function initialize(){
  if(polling||checking||(busy&&!operation))return false;
  if(!await checkReady())return false;
  if(!trackingLoaded)loadTracking();
- if(legacy)legacyNotice();else if(operation)await poll();else output.textContent='已就绪。粘贴新增目录后提交。';
+ if(legacy)legacyNotice();else if(operation)await poll();else output.textContent='已就绪。请选择或输入新增影视路径。';
  controls();return true;
 }
 async function poll(){
  if(!operation||polling||legacy||!ready)return;
  const queried=operation;polling=true;missing=false;clearTimeout(timer);controls();
  try{const s=await api('ScopedImport/Operations/'+encodeURIComponent(queried));if(operation!==queried)return;
-  output.textContent=s.Message+'\n操作编号：'+queried+'\n新增 '+s.Created.length+' 项；跳过 '+s.Skipped.length+' 项\n'+s.Created.map(x=>x.Type+'：'+x.Name).join('\n')+'\n'+s.Warnings.join('\n')+'\n'+(s.MetadataProviders||[]).map(x=>x.Type+' / '+x.Provider+'：'+(providerLabels[x.Outcome]||x.Outcome)).join('\n');
-  renderMovies(s.Movies);renderAccess(s);
+  const message=s.Message.replace(/^0\.1 版暂不支持 ISO\/光盘目录或链接媒体，未创建任何条目$/, '暂不支持 ISO、光盘或链接媒体，请选择普通视频目录。');
+  output.textContent=message+'\n新增 '+s.Created.length+' 项，跳过 '+s.Skipped.length+' 项'
+   +(s.MetadataProviders?.length?'\n元数据：'+[...new Set(s.MetadataProviders.map(x=>providerLabels[x.Outcome]||x.Outcome))].join('、'):'');
+  getElement('siDetails').hidden=false;
+  getElement('siLog').textContent=['操作编号：'+queried,...s.Created.map(x=>x.Type+'：'+x.Name),...s.Warnings,
+   ...(s.MetadataProviders||[]).map(x=>x.Type+' / '+x.Provider+'：'+(providerLabels[x.Outcome]||x.Outcome)),
+   '枚举目录：',...(s.EnumeratedDirectories||[]),'读取文件：',...(s.ReadFiles||[])].join('\n');
+  renderMovies(s.Movies);
   if(['Completed','Rejected','Partial'].includes(s.State)){removeTracking();busy=false;operation=null;}else{busy=true;timer=setTimeout(poll,2000);}
  }catch(error){if(operation!==queried)return;missing=error.kind==='OperationNotFound';busy=true;
   if(missing)renderMovies([]);onAuthError(error);output.textContent=errorText(error)+'\n操作编号：'+queried;
@@ -112,7 +212,7 @@ resumeButton.addEventListener('click',async()=>{
  if(!ready&&!await checkReady())return;
  if(!trackingLoaded)loadTracking();
  if(legacy){removeTracking();legacy=false;saveTracking();}
- if(operation)await poll();else{output.textContent='已就绪。粘贴新增目录后提交。';controls();}
+ if(operation)await poll();else{output.textContent='已就绪。请选择或输入新增影视路径。';controls();}
 });
 forgetButton.addEventListener('click',async()=>{
  if(polling||checking||!operation||(!missing&&!legacy))return;
@@ -124,9 +224,9 @@ forgetButton.addEventListener('click',async()=>{
 
 page.addEventListener('viewshow',initialize);
 page.querySelector('#siForm').addEventListener('submit',async e=>{
- e.preventDefault();if(busy||!ready)return;busy=true;controls();renderMovies([]);output.textContent='正在提交……';
+ e.preventDefault();if(busy||!ready)return;busy=true;controls();getElement('siDetails').hidden=true;renderMovies([]);output.textContent='正在提交……';
  try{const r=await api('ScopedImport/Import','POST',{Path:page.querySelector('#siPath').value.trim(),FetchMetadata:page.querySelector('#siMetadata').value==='library'});
-  operation=r.OperationId;saveTracking();output.textContent='请求已提交，操作编号：'+operation;poll();
+  operation=r.OperationId;saveTracking();output.textContent='已排队，操作编号：'+operation;poll();
  }catch(error){onAuthError(error);output.textContent='提交未确认：'+errorText(error)+' 不会自动重试；请先确认服务端。';busy=false;controls();}
 });
 controls();})();

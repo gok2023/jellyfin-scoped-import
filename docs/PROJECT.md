@@ -1,11 +1,19 @@
 # 当前技术状态
 
-更新：2026-10-16。当前版本 **0.2.0.1**，本轮已按用户明确授权完成正式构建、GitHub v0.2.0.1 正式 Latest 发布与 artifacts 限定清理；结果见正式产物节。仓库：[gok2023/jellyfin-scoped-import](https://github.com/gok2023/jellyfin-scoped-import)，Public，main。起始 HEAD 为 a3d0e470f119f1c5784d6e1cf928ab86cb48b7b6，先前未提交修复均属本次范围。生产服务、数据库、凭据和媒体未访问，不重写历史、不强推。
+更新：2026-11-04。当前源码及本地安装包版本 **0.2.0.2**，GitHub 已发布版本为 **0.2.0.1**。本轮在 main / 57951e1 和上一轮未提交交互修改的基础上继续开发。
+
+## Windows 原生目录选择
+
+- 两套页面从 `GET /ScopedImport/Libraries` 读取库名称与配置位置。管理员 `POST /ScopedImport/PickFolder` 接受媒体库 ID、配置位置索引和可选默认路径，从服务端当前配置解析根目录。旧 `GET /ScopedImport/Browse` 及网页逐层浏览已移除。
+- 仅接受本机连接。校验活动 Windows 会话和可用的默认交互桌面后，在专用 STA 打开 Shell FileOpenDialog。初始目录与返回路径均校验媒体库边界和重解析点。保存的默认路径不符合所选库时回到该库根目录。原生窗口允许使用系统导航，服务端仅向页面回填所选库内的有效目录。
+- 单进程只允许一个对话框。窗口的 STA 消息循环检查断连和十分钟软时限并请求关闭。前台激活受 Windows 策略限制。取消、失败或窗口不可用时保留手输路径。入库、元数据、数据库及操作恢复逻辑沿用原流程。
+- 0.2.0.2 构建时执行 `scripts/build.ps1`，编译零警告零错误，110 项离线用例或检查组通过，ArtifactCheck 与安装包白名单通过。临时目录和 Mock 覆盖库位置解析、STA、中文空格长路径、取消、断连、并发拒绝、越界、联接和双页提交恢复。产物位于 `artifacts/build-64ce00e450684bcd96027d84ede46f6d/`。
+- 2026-11-04 用户反馈已安装 0.2.0.2 并测试通过。反馈未附逐项测试清单。推送前仅更新该验收记录，沿用上述构建的离线验证证据。
 
 ## 当前版本、身份和许可
 
-- 插件 0.2.0.1，稳定 GUID `347d2c09-78a1-4697-9c3d-e23566122144`，Windows x64 / 原版 Jellyfin 10.11.11（ABI 10.11.11.0）及 BaseItemRepository。
-- csproj 的 AssemblyVersion/FileVersion/Version、Libraries API、客户端/页面、meta.json 与发布文件名均为 0.2.0.1；历史 0.2.0.0 标签/Release/附件保留。
+- 插件 0.2.0.2，稳定 GUID `347d2c09-78a1-4697-9c3d-e23566122144`，Windows x64 / 原版 Jellyfin 10.11.11（ABI 10.11.11.0）及 BaseItemRepository。
+- csproj 的 AssemblyVersion/FileVersion/Version、Libraries API、客户端/页面、meta.json 与打包文件名均为 0.2.0.2；历史 0.2.0.0 标签/Release/附件保留。
 - GPL-3.0-only，见 LICENSE 和 THIRD_PARTY_NOTICES；Jellyfin 参考/测试组件保留其许可。历史贡献/摘录来源不完整，未发现明确冲突，来源补充仍是待办，不声明全部材料为原创。
 - 维护 src/ScopedImport、scripts、tests、tools、docs 和根构建说明；.local、artifacts、旧生产备份不入 Git。AGENTS 已审阅规则以独立文档提交纳入，不改变其他长期规则。
 
