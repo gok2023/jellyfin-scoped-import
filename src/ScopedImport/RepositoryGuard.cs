@@ -72,11 +72,11 @@ public class RepositoryGuard : DispatchProxy
                         var conflict = Inner.RetrieveItem(item.Id) is not null;
                         if (!string.IsNullOrEmpty(item.Path))
                             conflict |= Inner.GetItemList(new InternalItemsQuery { Path = item.Path, Limit = 1 }).Count != 0;
-                        if (item is Season)
+                        if (item is Season && item.IndexNumber.HasValue)
                             conflict |= Inner.GetItemList(new InternalItemsQuery { ParentId = item.ParentId,
                                 IncludeItemTypes = [Jellyfin.Data.Enums.BaseItemKind.Season], IndexNumber = item.IndexNumber, Limit = 1 }).Count != 0;
-                        else if (string.IsNullOrEmpty(item.Path)) throw new RepositoryProtectionException("Pathless item is unsupported");
-                        if (item is Episode)
+                        if (string.IsNullOrEmpty(item.Path) && item is not Season { IndexNumber: not null }) throw new RepositoryProtectionException("Pathless item is unsupported");
+                        if (item is Episode && item.IndexNumber.HasValue)
                             conflict |= Inner.GetItemList(new InternalItemsQuery { ParentId = item.ParentId,
                                 IncludeItemTypes = [Jellyfin.Data.Enums.BaseItemKind.Episode], IndexNumber = item.IndexNumber, Limit = 1 }).Count != 0;
                         if (conflict)

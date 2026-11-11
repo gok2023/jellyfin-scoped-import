@@ -46,7 +46,6 @@ public sealed class Importer(ILibraryManager library, IItemRepository repository
 {
     private readonly ConcurrentDictionary<Guid, Operation> operations = new();
     private readonly SemaphoreSlim gate = new(1);
-    private static readonly HashSet<string> VideoExtensions = new(StringComparer.OrdinalIgnoreCase) { ".mkv", ".mp4", ".m4v", ".avi", ".ts", ".m2ts", ".mov", ".wmv" };
     internal static string Full(string path) => Path.TrimEndingDirectorySeparator(Path.GetFullPath(path));
     private static bool Below(string path, string root) => path.StartsWith(root + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase);
     private static bool Same(string a, string b) => string.Equals(a, b, StringComparison.OrdinalIgnoreCase);
@@ -112,6 +111,7 @@ public sealed class Importer(ILibraryManager library, IItemRepository repository
         Check(target);
         State(op, "Planning", "检查目标子树与已有条目");
         var files = new List<string>();
+        var inventory = new ResolutionDirectory();
         var watch = Stopwatch.StartNew();
         var entries = 0;
         void Walk(string directory, int depth)
@@ -119,6 +119,8 @@ public sealed class Importer(ILibraryManager library, IItemRepository repository
             ct.ThrowIfCancellationRequested();
             if (depth > 8 || watch.Elapsed > TimeSpan.FromSeconds(120)) throw new IOException("目录深度或枚举时间超过上限");
             Check(directory);
+            if (Same(Path.GetFileName(directory), "VIDEO_TS") || Same(Path.GetFileName(directory), "BDMV")) throw new IOException("暂不支持光盘目录：" + directory);
+            inventory.Add(directory, true);
             lock (op) op.EnumeratedDirectories.Add(directory);
             foreach (var entry in Directory.EnumerateFileSystemEntries(directory))
             {
@@ -127,13 +129,30 @@ public sealed class Importer(ILibraryManager library, IItemRepository repository
                 var path = Full(entry);
                 if (!Below(path, target)) throw new IOException("枚举越界");
                 if (Check(path).HasFlag(FileAttributes.Directory)) Walk(path, depth + 1);
-                else files.Add(path);
+                else { files.Add(path); inventory.Add(path, false); }
             }
         }
-        if (Directory.Exists(target)) Walk(target, 0); else files.Add(target);
-        if (files.Any(f => Path.GetExtension(f).ToLowerInvariant() is ".strm" or ".lnk" or ".mblink" or ".iso" or ".vob"))
+        if (Directory.Exists(target)) Walk(target, 0);
+        else
+        {
+            files.Add(target);
+            var directory = Path.GetDirectoryName(target)!;
+            if (Same(directory, root)) throw new IOException("单文件目标不能直接位于媒体库根");
+            inventory.Add(directory, true);
+            lock (op) op.EnumeratedDirectories.Add(directory);
+            foreach (var entry in Directory.EnumerateFiles(directory))
+            {
+                ct.ThrowIfCancellationRequested();
+                if (++entries > 10000 || watch.Elapsed > TimeSpan.FromSeconds(120)) throw new IOException("同目录归组检查超过预算");
+                var path = Full(entry);
+                if (!Below(path, directory)) throw new IOException("枚举越界");
+                Check(path);
+                inventory.Add(path, false);
+            }
+        }
+        if (files.Concat(Directory.Exists(target) ? [] : inventory.GetFilePaths(Path.GetDirectoryName(target)!)).Any(f => Path.GetExtension(f).ToLowerInvariant() is ".strm" or ".lnk" or ".mblink" or ".iso" or ".img" or ".vob"))
             throw new IOException("0.1 版暂不支持 ISO/光盘目录或链接媒体，未创建任何条目");
-        var videos = files.Where(f => VideoExtensions.Contains(Path.GetExtension(f))).ToArray();
+        var videos = files.Where(f => Emby.Naming.Video.VideoResolver.IsVideoFile(f, naming)).ToArray();
         if (videos.Length == 0) throw new IOException("目标内没有支持的视频文件");
         var pending = new List<Pending>();
         var options = folder.LibraryOptions;
@@ -154,16 +173,25 @@ public sealed class Importer(ILibraryManager library, IItemRepository repository
             item.DateCreated = DateTime.UtcNow; item.DateModified = File.GetLastWriteTimeUtc(path);
             planned[path] = item; pending.Add(new(item, parent, nfo, cover, series, season)); return item;
         }
+        T Resolve<T>(string path, Folder parent, CollectionType type, bool directory, string? expectedPath = null) where T : BaseItem
+        {
+            var entry = inventory.Add(path, directory);
+            using var readOnly = RepositoryGuard.ReadOnlyScope();
+            var resolved = library.ResolvePaths([entry], inventory, parent, options, type).ToArray();
+            if (resolved.Length == 0) throw new IOException("Jellyfin 未识别目标：" + path);
+            if (resolved.Length != 1 || resolved[0] is not T item || !Same(item.Path ?? "", expectedPath ?? path)
+                || item is Video { ExtraType: not null } or Video { VideoType: not VideoType.VideoFile })
+                throw new IOException("Jellyfin 已识别，但插件无法安全创建此类型或归组：" + path);
+            return item;
+        }
+
         if (kind == "movies")
         {
             var movieDir = Directory.Exists(target) ? target : Path.GetDirectoryName(target)!;
-            if (!Same(Path.GetDirectoryName(movieDir)!, root) || videos.Length != 1 || !Same(Path.GetDirectoryName(videos[0])!, movieDir))
+            if (!Same(Path.GetDirectoryName(movieDir)!, root) || videos.Length != 1 || inventory.GetFilePaths(movieDir).Count(path => Emby.Naming.Video.VideoResolver.IsVideoFile(path, naming)) != 1 || !Same(Path.GetDirectoryName(videos[0])!, movieDir))
                 throw new IOException("电影必须是媒体库下的独立单片目录，且只包含一个主视频；多版本/混合目录暂不支持");
             var video = videos[0];
-            var parsed = Emby.Naming.Video.VideoResolver.CleanDateTime(Path.GetFileName(movieDir), naming);
-            var movieName = Emby.Naming.Video.VideoResolver.TryCleanString(parsed.Name, naming, out var cleanName) ? cleanName : parsed.Name;
-            Use(video, () => new Movie { Name = string.IsNullOrWhiteSpace(movieName) ? Path.GetFileName(movieDir) : movieName,
-                ProductionYear = parsed.Year, VideoType = VideoType.VideoFile }, physicalRoot,
+            Use(video, () => Resolve<Movie>(movieDir, physicalRoot, CollectionType.movies, true, video), physicalRoot,
                 Existing(Path.ChangeExtension(video, ".nfo"), Path.Combine(movieDir, "movie.nfo")), Existing(Path.Combine(movieDir, "poster.jpg"), Path.Combine(movieDir, "folder.jpg")));
         }
         else
@@ -171,55 +199,97 @@ public sealed class Importer(ILibraryManager library, IItemRepository repository
             var seriesPath = Path.Combine(root, Path.GetRelativePath(root, target).Split(Path.DirectorySeparatorChar)[0]);
             if (!Directory.Exists(seriesPath)) throw new IOException("缺少剧目目录");
             Check(seriesPath);
-            var series = Use(seriesPath, () => new Series { Name = Path.GetFileName(seriesPath) }, physicalRoot,
+            var series = Use(seriesPath, () => Resolve<Series>(seriesPath, physicalRoot, CollectionType.tvshows, true), physicalRoot,
                 Existing(Path.Combine(seriesPath, "tvshow.nfo")), Existing(Path.Combine(seriesPath, "poster.jpg"), Path.Combine(seriesPath, "folder.jpg")));
-            var seasons = new Dictionary<int, Season>();
-            var episodeKeys = new HashSet<(int, int)>();
-            var existingSeasonNumbers = repository.GetItemList(new InternalItemsQuery { ParentId = series.Id, IncludeItemTypes = [BaseItemKind.Season] })
-                .Where(s => s.IndexNumber.HasValue).Select(s => s.IndexNumber!.Value).ToArray();
-            foreach (var video in videos)
+            var episodeKeys = new HashSet<(Guid Parent, int Episode)>();
+            var numberedSeasons = new Dictionary<int, Season>();
+            var episodeNames = new Emby.Naming.TV.EpisodeResolver(naming);
+
+            foreach (var group in videos.GroupBy(video => Path.GetDirectoryName(video)!, StringComparer.OrdinalIgnoreCase)
+                .OrderBy(group => Same(group.Key, seriesPath)))
             {
-                var nfo = Existing(Path.ChangeExtension(video, ".nfo"));
-                var layout = EpisodeLayout.Resolve(video, seriesPath, NfoNumber(nfo, "season", op), NfoNumber(nfo, "episode", op), existingSeasonNumbers, naming);
-                int? episodeNumber = layout.Episode, seasonNumber = layout.Season;
-                var directory = layout.SeasonDirectory ?? seriesPath;
-                if (layout.AssumedSeasonOne)
-                    lock (op) { if (!op.Warnings.Contains("部分剧集没有季号，按 Jellyfin 规则归入第 1 季。")) op.Warnings.Add("部分剧集没有季号，按 Jellyfin 规则归入第 1 季。"); }
-                if (episodeNumber < 0 || seasonNumber < 0 || !episodeKeys.Add((seasonNumber.Value, episodeNumber.Value)))
-                    throw new IOException("季集编号无效或同一集有多个文件，未创建条目：" + video);
-                if (!seasons.TryGetValue(seasonNumber.Value, out var season))
+                var directory = group.Key;
+                Season? directorySeason = null;
+                if (!Same(directory, seriesPath))
                 {
-                    if (Same(directory, seriesPath))
+                    if (!Same(Path.GetDirectoryName(directory)!, seriesPath))
+                        throw new IOException("当前插件无法安全创建嵌套剧集目录：" + directory);
+                    if (naming.AllExtrasTypesFolderNames.ContainsKey(Path.GetFileName(directory)))
+                        throw new IOException("当前插件无法安全创建 Jellyfin 额外内容目录：" + directory);
+                    var candidate = Resolve<Season>(directory, series, CollectionType.tvshows, true);
+                    if (candidate.IndexNumber is int number
+                        && (numberedSeasons.ContainsKey(number) || repository.GetItemList(new InternalItemsQuery
+                            { ParentId = series.Id, IndexNumber = number, IncludeItemTypes = [BaseItemKind.Season] })
+                            .Any(s => !Same(s.Path ?? "", directory))))
+                        throw new IOException("季编号冲突，保留已有条目：" + directory);
+                    directorySeason = Use(directory, () => candidate, series, Existing(Path.Combine(directory, "season.nfo")), null, series);
+                    if (directorySeason.IndexNumber != candidate.IndexNumber || directorySeason.SeriesId != series.Id)
+                        throw new IOException("已有季编号或父级冲突：" + directory);
+                    if (candidate.IndexNumber is int seasonNumber) numberedSeasons.Add(seasonNumber, directorySeason);
+                }
+
+                var parent = (Folder?)directorySeason ?? series;
+                var paths = group.ToHashSet(StringComparer.OrdinalIgnoreCase);
+                BaseItem[] resolved;
+                using (RepositoryGuard.ReadOnlyScope())
+                    resolved = library.ResolvePaths(inventory.GetFiles(directory), inventory, parent, options, CollectionType.tvshows).ToArray();
+                var episodes = new Dictionary<string, Episode>(StringComparer.OrdinalIgnoreCase);
+                foreach (var item in resolved)
+                {
+                    if (!paths.Contains(item.Path ?? "")) continue;
+                    if (item is not Episode { ExtraType: null, VideoType: VideoType.VideoFile } episode
+                        || episode.AdditionalParts.Length > 0 || episode.LocalAlternateVersions.Length > 0
+                        || !episodes.TryAdd(episode.Path, episode))
+                        throw new IOException("Jellyfin 已识别，但插件无法安全创建此类型或归组：" + directory);
+                }
+
+                foreach (var video in group)
+                {
+                    if (!episodes.TryGetValue(video, out var episode))
+                        throw new IOException("Jellyfin 未识别为独立剧集，可能是额外内容或归组成员：" + video);
+                    var parsed = episodeNames.Resolve(video, false, isOptimistic: false);
+                    episode.IndexNumber ??= parsed?.EpisodeNumber;
+                    var seasonNumber = episode.ParentIndexNumber ?? parsed?.SeasonNumber;
+                    if (parsed?.EndingEpisodeNumber is int end && end != episode.IndexNumber)
+                        throw new IOException("当前插件无法安全创建跨集文件：" + video);
+                    var season = directorySeason;
+                    if (season is null && (seasonNumber ?? (episode.IndexNumber.HasValue || episode.PremiereDate.HasValue ? 1 : null)) is int flatNumber)
                     {
-                        var old = repository.GetItemList(new InternalItemsQuery { ParentId = series.Id, IndexNumber = seasonNumber, IncludeItemTypes = [BaseItemKind.Season] }).OfType<Season>().ToArray();
-                        if (old.Length > 1 || old.Any(s => s.IsVirtualItem)) throw new IOException("季记录冲突或为缺失季，保留已有记录并停止");
-                        season = old.SingleOrDefault();
-                        if (season is null)
+                        seasonNumber = flatNumber;
+                        if (!numberedSeasons.TryGetValue(flatNumber, out season))
                         {
-                            var name = "Season " + seasonNumber.Value;
-                            season = new Season { Name = name, IndexNumber = seasonNumber, SeriesId = series.Id, SeriesName = series.Name,
-                                Id = library.GetNewItemId(series.Id + seasonNumber.Value.ToString(System.Globalization.CultureInfo.InvariantCulture) + name, typeof(Season)),
-                                IsVirtualItem = false, DateCreated = DateTime.UtcNow };
-                            season.SetParent(series); pending.Add(new(season, series, null, null, series, null));
+                            var old = repository.GetItemList(new InternalItemsQuery { ParentId = series.Id, IndexNumber = flatNumber, IncludeItemTypes = [BaseItemKind.Season] }).OfType<Season>().ToArray();
+                            if (old.Length > 1 || old.Any(s => s.IsVirtualItem || s.SeriesId != series.Id))
+                                throw new IOException("已有季记录冲突或为缺失季，已保留");
+                            season = old.SingleOrDefault();
+                            if (season is null)
+                            {
+                                var name = "Season " + flatNumber;
+                                season = new Season { Name = name, IndexNumber = flatNumber, SeriesId = series.Id, SeriesName = series.Name,
+                                    Id = library.GetNewItemId(series.Id + flatNumber.ToString(System.Globalization.CultureInfo.InvariantCulture) + name, typeof(Season)),
+                                    DateCreated = DateTime.UtcNow };
+                                season.SetParent(series);
+                                pending.Add(new(season, series, null, null, series, null));
+                            }
+                            numberedSeasons.Add(flatNumber, season);
                         }
                     }
-                    else
-                    {
-                        var sameNumber = repository.GetItemList(new InternalItemsQuery { ParentId = series.Id, IndexNumber = seasonNumber, IncludeItemTypes = [BaseItemKind.Season] });
-                        if (sameNumber.Any(s => string.IsNullOrEmpty(s.Path) || !Same(s.Path, directory)))
-                            throw new IOException("已有同编号季位于另一目录，保留并停止：" + directory);
-                        season = Use(directory, () => new Season { Name = "Season " + seasonNumber.Value, IndexNumber = seasonNumber,
-                            SeriesId = series.Id, SeriesName = series.Name, IsVirtualItem = false }, series, Existing(Path.Combine(directory, "season.nfo")), null, series);
-                    }
-                    seasons[seasonNumber.Value] = season;
+                    if (season?.IndexNumber is int expected && seasonNumber is int actual && expected != actual)
+                        throw new IOException("剧集与父季编号冲突：" + video);
+                    parent = (Folder?)season ?? series;
+                    episode.ParentIndexNumber = season?.IndexNumber ?? seasonNumber;
+                    episode.SeasonId = season?.Id ?? Guid.Empty;
+                    episode.SeriesId = series.Id;
+                    if (episode.IndexNumber is int number &&
+                        (!episodeKeys.Add((parent.Id, number)) || repository.GetItemList(new InternalItemsQuery
+                            { ParentId = parent.Id, IndexNumber = number, IncludeItemTypes = [BaseItemKind.Episode] })
+                            .Any(e => !Same(e.Path ?? "", video))))
+                        throw new IOException("剧集编号冲突，保留已有条目：" + video);
+                    var actualEpisode = Use(video, () => episode, parent, Existing(Path.ChangeExtension(video, ".nfo")), null, series, season);
+                    if (actualEpisode.SeriesId != series.Id || actualEpisode.SeasonId != episode.SeasonId
+                        || (actualEpisode.IndexNumber is int oldNumber && episode.IndexNumber is int newNumber && oldNumber != newNumber))
+                        throw new IOException("已有剧集父级或编号冲突：" + video);
                 }
-                if ((!Same(directory, seriesPath) && !Same(season.Path ?? "", directory)) || season.IndexNumber != seasonNumber)
-                    throw new IOException("同一季出现目录或编号冲突：" + video);
-                if (repository.GetItemList(new InternalItemsQuery { ParentId = season.Id, IndexNumber = episodeNumber, IncludeItemTypes = [BaseItemKind.Episode] })
-                    .Any(e => string.IsNullOrEmpty(e.Path) || !Same(e.Path, video))) throw new IOException("已有同编号集位于另一文件，保留并停止：" + video);
-                Use(video, () => new Episode { Name = layout.DisplayName, VideoType = VideoType.VideoFile,
-                    IndexNumber = episodeNumber, ParentIndexNumber = seasonNumber, SeriesId = series.Id, SeasonId = season.Id,
-                    SeriesName = series.Name, SeasonName = season.Name }, season, nfo, null, series, season);
             }
         }
         State(op, "Metadata", "仅获取新条目的元数据和媒体信息");
@@ -263,13 +333,13 @@ public sealed class Importer(ILibraryManager library, IItemRepository repository
                 if (entry.Series is { } series)
                 {
                     if (item is Season s) { s.SeriesName = series.Name; s.SeriesPresentationUniqueKey = series.GetPresentationUniqueKey(); }
-                    if (item is Episode e) { e.SeriesName = series.Name; e.SeriesPresentationUniqueKey = series.GetPresentationUniqueKey(); e.SeasonName = entry.Season!.Name; }
+                    if (item is Episode e) { e.SeriesName = series.Name; e.SeriesPresentationUniqueKey = series.GetPresentationUniqueKey(); e.SeasonName = entry.Season?.Name; }
                 }
                 item.PresentationUniqueKey = item.CreatePresentationUniqueKey();
                 using (RepositoryGuard.AppendScope([item.Id])) library.CreateItem(item, entry.Parent);
                 lock (op)
                 {
-                    op.Created.Add(new { item.Id, Type = item.GetType().Name, item.Path, item.Name, item.ParentId });
+                    op.Created.Add(new { item.Id, Type = item.GetType().Name, item.Path, item.Name, item.ParentId, item.IndexNumber, item.ParentIndexNumber });
                     if (item is Movie) MovieResult(op, item, "Created", metadataResults[item.Id]);
                 }
                 // Only this operation's freshly created ID, while holding the gate.
@@ -390,7 +460,7 @@ public sealed class Importer(ILibraryManager library, IItemRepository repository
         info.MetadataCountryCode = options.MetadataCountryCode ?? configuration.Configuration.MetadataCountryCode;
         info.IndexNumber = item.IndexNumber; info.ParentIndexNumber = item.ParentIndexNumber;
         if (info is SeasonInfo si) { si.SeriesProviderIds = new(entry.Series!.ProviderIds); si.SeriesDisplayOrder = entry.Series.DisplayOrder; }
-        if (info is EpisodeInfo ei) { ei.SeriesProviderIds = new(entry.Series!.ProviderIds); ei.SeasonProviderIds = new(entry.Season!.ProviderIds); ei.SeriesDisplayOrder = entry.Series.DisplayOrder; }
+        if (info is EpisodeInfo ei) { ei.SeriesProviderIds = new(entry.Series!.ProviderIds); if (entry.Season is { } season) ei.SeasonProviderIds = new(season.ProviderIds); ei.SeriesDisplayOrder = entry.Series.DisplayOrder; }
         var before = op.MetadataProviders.Count;
         BaseItem? remote = item switch
         {

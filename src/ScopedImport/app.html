@@ -1,6 +1,6 @@
 <!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Jellyfin 定向入库</title>
 <style>body{font:16px/1.65 system-ui;background:#111923;color:#e9eff8;max-width:860px;margin:40px auto;padding:0 22px}h1{font-size:30px;margin-bottom:0}.muted{color:#a8b9cc}section{background:#1d2938;border:1px solid #344456;border-radius:12px;padding:24px;margin:22px 0}label{display:block;margin:12px 0 4px}input:not([type=checkbox]){box-sizing:border-box;width:100%;background:#111923;color:inherit;border:1px solid #60758d;border-radius:6px;padding:12px;font:inherit}button{border:0;border-radius:6px;background:#6ed8d0;color:#082725;font:600 16px system-ui;padding:12px 22px;margin-top:16px;cursor:pointer}button:disabled{opacity:.45;cursor:default}pre{white-space:pre-wrap;overflow-wrap:anywhere;font:14px/1.8 system-ui}summary{cursor:pointer}.badge{color:#6ed8d0}a{color:#6ed8d0}</style>
-<button type="button" id="siSettingsOpen" style="float:right" aria-label="设置" title="设置">⚙</button><h1 title="ScopedImport 0.2.0.2">定向入库</h1>
+<button type="button" id="siSettingsOpen" style="float:right" aria-label="设置" title="设置">⚙</button><h1 title="ScopedImport 0.2.0.3">定向入库</h1>
 <p>选择新增影视目录，自动匹配媒体库并添加缺失条目。</p>
 <p id="localFileHelp" hidden>这是页面源文件，不能在这里登录。请打开 <a href="http://127.0.0.1:8096/ScopedImport/App">本机 Jellyfin 定向入库页面</a>，再输入管理员账号。无需修改浏览器安全设置。</p>
 <section><form id="login"><b>管理员登录</b><p class="muted" id="host"></p><label for="user">用户名</label><input id="user" autocomplete="username" required><label for="password">密码</label><input id="password" type="password" autocomplete="current-password" required><button id="loginButton">连接 Jellyfin</button></form><p id="connection" aria-live="polite">尚未连接</p></section>
@@ -30,7 +30,7 @@ $('host').textContent='服务器：'+base.origin+base.pathname;
 function onAuthError(error){if(['Unauthorized','Forbidden'].includes(error.kind)){ready=false;token=null;$('login').hidden=false;$('connection').textContent=errorText(error);}}
 function api(route,method='GET',body){return new Promise((resolve,reject)=>{
  const request=new XMLHttpRequest();request.open(method,new URL(route,base).href,true);request.timeout=route==='ScopedImport/PickFolder'?0:20000;
- request.setRequestHeader('Content-Type','application/json');request.setRequestHeader('Authorization','MediaBrowser Client="ScopedImport", Device="Browser", DeviceId="scoped-import-browser", Version="0.2.0.2"');if(token)request.setRequestHeader('X-Emby-Token',token);
+ request.setRequestHeader('Content-Type','application/json');request.setRequestHeader('Authorization','MediaBrowser Client="ScopedImport", Device="Browser", DeviceId="scoped-import-browser", Version="0.2.0.3"');if(token)request.setRequestHeader('X-Emby-Token',token);
  request.onload=()=>{let data;try{data=JSON.parse(request.responseText);}catch{}
   if(request.status<200||request.status>=300){reject(httpFailure(request.status,data,route));return;}
   if(!data||typeof data!=='object'){reject(failure('InvalidResponse'));return;}resolve(data);

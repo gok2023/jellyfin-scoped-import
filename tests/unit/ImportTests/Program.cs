@@ -155,6 +155,51 @@ await Test("NFO access/sharing and missing paths are fatal, not content warnings
     Throws<FileNotFoundException>(() => Importer.ReadNfo(h.Nfo + ".missing", op));
     Assert(op.Warnings.Count == 0, "access error swallowed"); return Task.CompletedTask;
 });
+await Test("unnumbered season and clips stay scoped and idempotent", async () =>
+{
+    var h = new Harness(Path.Combine(fixtureRoot, Guid.NewGuid().ToString("N")), television: true);
+    var clips = Path.Combine(h.Target, "剪辑");
+    Directory.CreateDirectory(clips);
+    Directory.CreateDirectory(Path.Combine(h.Target, "Season 01"));
+    var clip = Path.Combine(clips, "百年孤独.mp4");
+    File.WriteAllBytes(clip, [0]);
+    var first = await h.Finish(h.Start(false, clips));
+    Assert(first.GetProperty("State").GetString() == "Completed", first.ToString());
+    Assert(first.GetProperty("EnumeratedDirectories").EnumerateArray().Single().GetString() == clips, "sibling enumerated");
+    var season = h.Created.OfType<MediaBrowser.Controller.Entities.TV.Season>().Single();
+    var episode = h.Created.OfType<MediaBrowser.Controller.Entities.TV.Episode>().Single();
+    Assert(season.Path == clips && season.IndexNumber is null && season.ParentId == h.Created[0].Id, "season path/number/parent");
+    Assert(episode.Path == clip && episode.IndexNumber is null && episode.ParentIndexNumber is null
+        && episode.ParentId == season.Id && episode.SeriesId == h.Created[0].Id, "episode path/number/parent");
+    File.WriteAllBytes(Path.Combine(clips, "OVA.mp4"), [0]);
+    var again = await h.Finish(h.Start(false, clips));
+    Assert(again.GetProperty("State").GetString() == "Completed" && h.Created.Count == 4, again.ToString());
+    Assert(h.Unrelated.Name == "untouched", "unrelated row changed");
+});
+
+await Test("numbered seasons append and true episode conflicts preserve rows", async () =>
+{
+    var h = new Harness(Path.Combine(fixtureRoot, Guid.NewGuid().ToString("N")), television: true);
+    var firstSeason = Path.Combine(h.Target, "Season 01");
+    Directory.CreateDirectory(firstSeason);
+    File.WriteAllBytes(Path.Combine(firstSeason, "Show S01E01.mkv"), [0]);
+    var first = await h.Run(false);
+    Assert(first.GetProperty("State").GetString() == "Completed", first.ToString());
+    var secondSeason = Path.Combine(h.Target, "Season 02");
+    Directory.CreateDirectory(secondSeason);
+    var secondEpisode = Path.Combine(secondSeason, "Show S02E01.mkv");
+    File.WriteAllBytes(secondEpisode, [0]);
+    File.WriteAllText(Path.ChangeExtension(secondEpisode, ".nfo"), "<episodedetails><title>Local title</title><season>7</season><episode>9</episode></episodedetails>");
+    var second = await h.Finish(h.Start(false, secondSeason));
+    Assert(second.GetProperty("State").GetString() == "Completed", second.ToString());
+    var added = (MediaBrowser.Controller.Entities.TV.Episode)h.Created[^1];
+    Assert(added.Name == "Local title" && added.IndexNumber == 1 && added.ParentIndexNumber == 2
+        && added.ParentId == h.Created[^2].Id, "numbered episode parent or NFO boundary");
+    File.WriteAllBytes(Path.Combine(secondSeason, "Other S02E01.mkv"), [0]);
+    var conflict = await h.Finish(h.Start(false, secondSeason));
+    Assert(conflict.GetProperty("State").GetString() == "Rejected" && h.Created.Count == 5, conflict.ToString());
+});
+
 await Test("NFO junction path remains fatal", () =>
 {
     var h=New();File.WriteAllText(h.Nfo,"<movie/>");var link=Path.Combine(fixtureRoot,"junction-"+Guid.NewGuid().ToString("N"));
@@ -260,9 +305,9 @@ public sealed class Harness
     public IMetadataProvider<Movie>[] Selected { get => providerStub.Selected; set => providerStub.Selected = value; }
     public IItemRepository Guarded {get;}
     private readonly Importer importer;
-    public Harness(string directory)
+    public Harness(string directory, bool television = false)
     {
-        var root=Path.Combine(directory,"movies");Target=Path.Combine(root,"Example Movie (2001)");Directory.CreateDirectory(Target);File.WriteAllBytes(Path.Combine(Target,"video.mkv"),[0]);Nfo=Path.Combine(Target,"movie.nfo");
+        var root=Path.Combine(directory,television ? "tv" : "movies");Target=Path.Combine(root,"Example Movie (2001)");Directory.CreateDirectory(Target);if (!television) File.WriteAllBytes(Path.Combine(Target,"video.mkv"),[0]);Nfo=Path.Combine(Target,"movie.nfo");
         var physical=new Folder{Id=Guid.NewGuid(),Path=root,Name="root"};var collection=new CollectionFolder{Id=Guid.NewGuid(),PhysicalFolderIds=[physical.Id]};
         Store[physical.Id]=physical;Store[collection.Id]=collection;Store[Unrelated.Id]=Unrelated;
         var inner=Stub.Make<IItemRepository>((m,a)=>m.Name switch {
@@ -272,8 +317,11 @@ public sealed class Harness
             _=>throw new Exception("Unexpected repository call "+m.Name)});
         Guarded=DispatchProxy.Create<IItemRepository,RepositoryGuard>();((RepositoryGuard)(object)Guarded).Inner=inner;
         var library=Stub.Make<ILibraryManager>((m,a)=>m.Name switch {
-            "GetVirtualFolders"=>new List<VirtualFolderInfo>{new(){ItemId=collection.Id.ToString(),Locations=[root],CollectionType=CollectionTypeOptions.movies,LibraryOptions=new(){PreferredMetadataLanguage="en",MetadataCountryCode="US"}}},
+            "GetVirtualFolders"=>new List<VirtualFolderInfo>{new(){ItemId=collection.Id.ToString(),Locations=[root],CollectionType=television ? CollectionTypeOptions.tvshows : CollectionTypeOptions.movies,LibraryOptions=new(){PreferredMetadataLanguage="en",MetadataCountryCode="US"}}},
+            "ResolvePaths"=> ((IEnumerable<MediaBrowser.Model.IO.FileSystemMetadata>)a![0]!).Select(entry =>
+                Resolve(entry, (Folder)a[2]!, television)),
             "FindByPath"=>Store.Values.FirstOrDefault(x=>x.Path==(string)a![0]!),
+            "GetLibraryOptions"=>new LibraryOptions(),
             "GetItemById"=>Store.GetValueOrDefault((Guid)a![0]!),
             "GetNewItemId"=>new Guid(System.Security.Cryptography.MD5.HashData(Encoding.UTF8.GetBytes((string)a![0]!))),
             "CreateItem"=>Create((BaseItem)a![0]!),
@@ -285,10 +333,19 @@ public sealed class Harness
         BaseItem.LibraryManager=library;BaseItem.ItemRepository=Guarded;BaseItem.ConfigurationManager=config;BaseItem.Logger=NullLogger<BaseItem>.Instance;
         importer=new(library,Guarded,providers,encoder,streams,new NamingOptions(),config);
     }
-    private List<BaseItem> Query(InternalItemsQuery q)=>Store.Values.Where(x=>(q.Path is null || x.Path==q.Path) && (q.ParentId==Guid.Empty || x.ParentId==q.ParentId)).ToList();
+    private static BaseItem Resolve(MediaBrowser.Model.IO.FileSystemMetadata entry, Folder parent, bool television)
+    {
+        if (!television) return new Movie { Path = Path.Combine(entry.FullName, "video.mkv"), Name = "Example Movie", ProductionYear = 2001 };
+        if (!entry.IsDirectory) return new MediaBrowser.Controller.Entities.TV.Episode { Path = entry.FullName, Name = entry.Name };
+        if (parent is MediaBrowser.Controller.Entities.TV.Series series)
+            return new MediaBrowser.Controller.Entities.TV.Season { Path = entry.FullName, Name = entry.Name, SeriesId = series.Id,
+                IndexNumber = Emby.Naming.TV.SeasonPathParser.Parse(entry.FullName, series.Path, true, true).SeasonNumber };
+        return new MediaBrowser.Controller.Entities.TV.Series { Path = entry.FullName, Name = entry.Name };
+    }
+    private List<BaseItem> Query(InternalItemsQuery q)=>Store.Values.Where(x=>(q.Path is null || x.Path==q.Path) && (q.ParentId==Guid.Empty || x.ParentId==q.ParentId) && (!q.IndexNumber.HasValue || x.IndexNumber==q.IndexNumber)).ToList();
     private object? Save(IReadOnlyList<BaseItem> items){foreach(var item in items)Store.Add(item.Id,item);return null;}
     private object? Create(BaseItem item){Guarded.SaveItems([item],CancellationToken.None);Created.Add(item);return null;}
-    public Guid Start(bool fetch)=>JsonSerializer.SerializeToElement(importer.Start(new(Target,FetchMetadata:fetch))).GetProperty("OperationId").GetGuid();
+    public Guid Start(bool fetch, string? path = null)=>JsonSerializer.SerializeToElement(importer.Start(new(path ?? Target,FetchMetadata:fetch))).GetProperty("OperationId").GetGuid();
     public async Task<JsonElement> Finish(Guid id)
     {
         for(var n=0;n<5000;n++) {var s=JsonSerializer.SerializeToElement(importer.Status(id));if(s.GetProperty("State").GetString() is "Completed" or "Rejected" or "Partial")return s;await Task.Delay(10);}

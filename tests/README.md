@@ -1,6 +1,6 @@
 # 测试说明
 
-测试仅覆盖当前 ScopedImport 0.2.0.2，不依赖旧 Python 助手、ReadOnlyPlanner 或 AppendProbe 工程。
+测试覆盖当前 ScopedImport 0.2.0.3，不依赖旧 Python 助手、ReadOnlyPlanner 或 AppendProbe 工程。
 
 ## 离线检查
 
@@ -15,6 +15,8 @@ Node 页面测试使用 VM 和假的 XMLHttpRequest/ApiClient，不发送网络�
 锁文件的 `testRuntimeReferences` 固定一个 Jellyfin.Database.Implementations.dll（BaseItem 构造所需），bootstrap 从同一已校验官方归档提取，test.ps1 先核摘要。该 DLL 不作为插件引用，不进入插件 ZIP。两套页面增加 18 个 VM 场景，覆盖根/自定义基础路径、三种终态、模式切换、失败重查、操作恢复、已有项指引和准确 ItemId 详情链接。Python 门禁测试验证默认拒绝、生产端口/外部地址拒绝、错误目录、伪标记、路径逃逸、凭据脱敏及禁止扫描/关闭服务请求。
 
 `test-operation-recovery.cjs` 的 33 个 VM 场景先在补修前复现两页旧编号 404 无法恢复（0 通过、2 失败），再验证修复：专用错误码与对应编号、重复/重叠查询、刷新恢复、显式结束跟踪、就绪拒绝、网络与空超时拒绝、401/403、代理 404/错误编号或错误码、服务故障、不自动重发、local/library 新模式及新编号、服务器/基础路径隔离和旧键显式迁移。配置页替身覆盖 ApiClient 1.11.0 的 Fetch Response.status/json() 拒绝，并兼容 responseJSON/responseText 测试形状。控制器测试直接调用 action，未启动 ASP.NET/Jellyfin，因此不是实际 HTTP 中间件或反向代理验收。
+
+0.2.0.3 的 ImportTests 用解析器接口替身和真实 Emby.Naming 测试合成剪辑目录、无编号季集、定向追加、重复提交、编号冲突以及 NFO 标题与编号的边界。替身测试验证写入参数与仓储保护。真实宿主解析、持久化、刷新后的展示仍需隔离验收。
 
 ## 集成测试：尚未验证，宿主引导流程尚未实现
 

@@ -34,7 +34,7 @@ public sealed class Controller(Importer importer, ILibraryManager library, IItem
 
     [HttpGet("Libraries")]
     public IActionResult Libraries() => Ok(new { Ready = repository is RepositoryGuard,
-        Version = "0.2.0.2", Libraries = library.GetVirtualFolders().Select(x => new { x.ItemId, x.Name, x.Locations, x.CollectionType }) });
+        Version = "0.2.0.3", Libraries = library.GetVirtualFolders().Select(x => new { x.ItemId, x.Name, x.Locations, x.CollectionType }) });
 
     [HttpPost("PickFolder"), ResponseCache(NoStore = true, Location = ResponseCacheLocation.None)]
     public Task<IActionResult> PickFolder([FromBody] FolderPickRequest request, CancellationToken cancellationToken)

@@ -2,12 +2,12 @@
 
 把指定路径下缺失的电影或剧集追加到已有 Jellyfin 媒体库，适合新增少量媒体时由管理员手动入库。插件在 Jellyfin 内运行，无需 Python 常驻助手。
 
-当前源码版本 **0.2.0.2**，面向 **Windows x64 + 原版 Jellyfin 10.11.11（ABI 10.11.11.0）**。这是第三方插件。0.2.0.2 提供本地安装包，GitHub 上的已发布版本仍为 0.2.0.1。
+当前源码版本 **0.2.0.3**，面向 **Windows x64 + 原版 Jellyfin 10.11.11（ABI 10.11.11.0）**。这是第三方插件。0.2.0.3 提供本地安装包，GitHub 上的已发布版本仍为 0.2.0.1。
 
 ## 主要功能与工作原理
 
 - 按电影目录、剧目目录、季目录或单集文件追加缺失条目，核对并跳过已有条目。
-- 支持单片目录（一个主视频）、NFO、SxxEyy 和 E01 单集子目录；拒绝存在季集歧义的布局。
+- 使用 Jellyfin 10.11.11 原生解析识别单片目录、剧目、季和集，保留无编号季集。单文件提交可检查同目录文件的归组信息，媒体探测仍限于选中的新视频。当前拒绝需要额外所有者关联、跨集或多文件归组的条目。
 - 新条目可按媒体库启用的提供器及顺序补充部分元数据，也可选择只读取本地 NFO；不执行完整刮削、远程图片或演员创建流程。
 - 无 NFO 的电影可基础入库；普通文本、空文件、损坏 XML 或不支持根类型的 NFO 会警告后降级。超过 2MB、DTD/实体声明、路径及访问安全错误仍会停止任务，原文件不修改。
 - 管理员权限、路径边界和追加保护检查；页面展示操作结果及插件记录的目录/文件访问。
@@ -24,7 +24,7 @@
 
 ### 1. 选择正确的安装包
 
-本地运行 `pwsh -NoProfile -File scripts/build.ps1` 后，安装包 `ScopedImport-0.2.0.2-jf10.11.11.zip` 和可直接复制的 `ScopedImport_0.2.0.2/` 位于对应的 `artifacts/build-*/` 目录。该目录同时包含外部 ZIP 校验文件。
+本地运行 `pwsh -NoProfile -File scripts/build.ps1` 后，安装包 `ScopedImport-0.2.0.3-jf10.11.11.zip` 和可直接复制的 `ScopedImport_0.2.0.3/` 位于对应的 `artifacts/build-*/` 目录。该目录同时包含外部 ZIP 校验文件。
 
 已发布旧版可从 [v0.2.0.1 Release](https://github.com/gok2023/jellyfin-scoped-import/releases/tag/v0.2.0.1) 下载。
 
@@ -33,14 +33,14 @@ GitHub 自动生成的 **Source code (zip)** / **Source code (tar.gz)** 是源�
 在下载目录用 PowerShell 计算摘要，与 `.sha256` 文件中的摘要逐字核对：
 
 ```powershell
-Get-FileHash -LiteralPath .\ScopedImport-0.2.0.2-jf10.11.11.zip -Algorithm SHA256
-Get-Content -LiteralPath .\ScopedImport-0.2.0.2-jf10.11.11.zip.sha256
+Get-FileHash -LiteralPath .\ScopedImport-0.2.0.3-jf10.11.11.zip -Algorithm SHA256
+Get-Content -LiteralPath .\ScopedImport-0.2.0.3-jf10.11.11.zip.sha256
 ```
 
 当前 ZIP 实际包含七个文件：
 
 ```text
-ScopedImport_0.2.0.2/
+ScopedImport_0.2.0.3/
   ScopedImport.dll
   meta.json
 README.md
@@ -70,14 +70,14 @@ ZIP 内的 `SHA256SUMS.txt` 校验插件 DLL；外部 `.zip.sha256` 校验整个
 
 1. 等待正在进行的入库操作结束，再完全停止该 Jellyfin 实例（Windows 服务停止对应服务；托盘版停止/退出服务器），确认服务器进程已退出。
 2. 备份该实例的数据目录、配置目录及旧插件目录，保留可恢复的数据库备份。配置目录若单独设置也要备份；不要在进程写入时只复制单个数据库文件。
-3. 将 ZIP 解压到临时目录，只把其中 `ScopedImport_0.2.0.2` 文件夹复制到 `<实际数据目录>\plugins`。根部的说明和许可文件保留供阅读，无需放入插件目录。
+3. 将 ZIP 解压到临时目录，只把其中 `ScopedImport_0.2.0.3` 文件夹复制到 `<实际数据目录>\plugins`。根部的说明和许可文件保留供阅读，无需放入插件目录。
 4. 升级时先将所有旧 ScopedImport 目录或散放的旧 `ScopedImport.dll` 移到插件目录之外的备份位置，避免同时加载多个版本。只处理此插件，不覆盖其他插件。
 
 安装后的层级必须是：
 
 ```text
-<实际数据目录>\plugins\ScopedImport_0.2.0.2\ScopedImport.dll
-<实际数据目录>\plugins\ScopedImport_0.2.0.2\meta.json
+<实际数据目录>\plugins\ScopedImport_0.2.0.3\ScopedImport.dll
+<实际数据目录>\plugins\ScopedImport_0.2.0.3\meta.json
 ```
 
 DLL 和 `meta.json` 在同一层。不要多套一层 ZIP 名称目录，也不要将 DLL 放进 `plugins\configurations`。确保 Jellyfin 运行账户有读取权限。

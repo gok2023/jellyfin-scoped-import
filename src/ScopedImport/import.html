@@ -1,6 +1,6 @@
 <!DOCTYPE html><html><head><title>定向入库</title></head><body>
 <div id="ScopedImportPage" data-role="page" class="page type-interior pluginConfigurationPage" data-require="emby-input,emby-button">
-<div data-role="content"><div class="content-primary"><button type="button" id="siSettingsOpen" style="float:right" aria-label="设置" title="设置">⚙</button><h1 title="ScopedImport 0.2.0.2">定向入库</h1>
+<div data-role="content"><div class="content-primary"><button type="button" id="siSettingsOpen" style="float:right" aria-label="设置" title="设置">⚙</button><h1 title="ScopedImport 0.2.0.3">定向入库</h1>
 <p>选择新增影视目录，自动匹配媒体库并添加缺失条目。</p>
 <form id="siForm"><div class="inputContainer"><label class="inputLabel" for="siPath">新增影视路径</label><div style="display:flex;align-items:center;gap:.5rem"><input is="emby-input" id="siPath" required placeholder="E:\Media\TV\ExampleShow" /><button type="button" id="siBrowseOpen" aria-label="浏览文件夹" title="浏览文件夹">📁</button></div><p id="siTarget" aria-live="polite"></p><p id="siPickFeedback" role="status"></p></div>
 <div class="inputContainer"><label for="siMetadata">新条目的元数据</label><select id="siMetadata" style="display:block;position:static;opacity:1;pointer-events:auto;padding:10px;width:100%;color:inherit;background:#202b35"><option value="library">按 Jellyfin 媒体库设置获取</option><option value="local">只读取本地 NFO，不联网刮削</option></select></div>
