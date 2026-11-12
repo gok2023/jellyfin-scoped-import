@@ -31,6 +31,7 @@ public sealed class Operation(Guid id)
     public List<string> Warnings { get; } = [];
     public List<ProviderAttempt> MetadataProviders { get; } = [];
     public List<object> Movies { get; } = [];
+    public List<object> NativeRefresh { get; } = [];
     internal Dictionary<string, XDocument?> NfoDocuments { get; } = new(StringComparer.OrdinalIgnoreCase);
     internal bool Finished { get; set; }
 
@@ -72,7 +73,7 @@ public sealed class Importer(ILibraryManager library, IItemRepository repository
     {
         if (!operations.TryGetValue(id, out var op)) return null;
         lock (op) return new { op.Id, State = !op.Finished && op.State is ("Completed" or "Rejected" or "Partial") ? "Finishing" : op.State, op.Message, Created = op.Created.ToArray(), Skipped = op.Skipped.ToArray(),
-            EnumeratedDirectories = op.EnumeratedDirectories.ToArray(), ReadFiles = op.ReadFiles.ToArray(), Warnings = op.Warnings.ToArray(), MetadataProviders = op.MetadataProviders.ToArray(), Movies = op.Movies.ToArray() };
+            EnumeratedDirectories = op.EnumeratedDirectories.ToArray(), ReadFiles = op.ReadFiles.ToArray(), Warnings = op.Warnings.ToArray(), MetadataProviders = op.MetadataProviders.ToArray(), Movies = op.Movies.ToArray(), NativeRefresh = op.NativeRefresh.ToArray() };
     }
     private static void State(Operation op, string state, string message) { lock (op) { op.State = state; op.Message = message; } }
 
@@ -217,12 +218,24 @@ public sealed class Importer(ILibraryManager library, IItemRepository repository
                     if (naming.AllExtrasTypesFolderNames.ContainsKey(Path.GetFileName(directory)))
                         throw new IOException("当前插件无法安全创建 Jellyfin 额外内容目录：" + directory);
                     var candidate = Resolve<Season>(directory, series, CollectionType.tvshows, true);
-                    if (candidate.IndexNumber is int number
-                        && (numberedSeasons.ContainsKey(number) || repository.GetItemList(new InternalItemsQuery
-                            { ParentId = series.Id, IndexNumber = number, IncludeItemTypes = [BaseItemKind.Season] })
-                            .Any(s => !Same(s.Path ?? "", directory))))
-                        throw new IOException("季编号冲突，保留已有条目：" + directory);
-                    directorySeason = Use(directory, () => candidate, series, Existing(Path.Combine(directory, "season.nfo")), null, series);
+                    if (candidate.IndexNumber is int number)
+                    {
+                        if (numberedSeasons.TryGetValue(number, out var duplicate))
+                            throw new IOException($"规划冲突：本次操作包含两个第 {number} 季目录（{duplicate.Path ?? "无路径"}；{directory}）");
+                        directorySeason = FindNumberedSeason(series, number, directory, op, candidate);
+                    }
+                    if (directorySeason is null)
+                        directorySeason = Use(directory, () => candidate, series, Existing(Path.Combine(directory, "season.nfo")), null, series);
+                    else
+                    {
+                        lock (op)
+                        {
+                            op.Skipped.Add(directory);
+                            op.Warnings.Add(string.IsNullOrEmpty(directorySeason.Path)
+                                ? $"仓储中已有无路径第 {directorySeason.IndexNumber} 季，复用为新剧集父级：{directory}"
+                                : $"仓储及路径查询均确认已有同路径第 {directorySeason.IndexNumber} 季：{directory}");
+                        }
+                    }
                     if (directorySeason.IndexNumber != candidate.IndexNumber || directorySeason.SeriesId != series.Id)
                         throw new IOException("已有季编号或父级冲突：" + directory);
                     if (candidate.IndexNumber is int seasonNumber) numberedSeasons.Add(seasonNumber, directorySeason);
@@ -258,10 +271,7 @@ public sealed class Importer(ILibraryManager library, IItemRepository repository
                         seasonNumber = flatNumber;
                         if (!numberedSeasons.TryGetValue(flatNumber, out season))
                         {
-                            var old = repository.GetItemList(new InternalItemsQuery { ParentId = series.Id, IndexNumber = flatNumber, IncludeItemTypes = [BaseItemKind.Season] }).OfType<Season>().ToArray();
-                            if (old.Length > 1 || old.Any(s => s.IsVirtualItem || s.SeriesId != series.Id))
-                                throw new IOException("已有季记录冲突或为缺失季，已保留");
-                            season = old.SingleOrDefault();
+                            season = FindNumberedSeason(series, flatNumber, null, op);
                             if (season is null)
                             {
                                 var name = "Season " + flatNumber;
@@ -285,6 +295,8 @@ public sealed class Importer(ILibraryManager library, IItemRepository repository
                             { ParentId = parent.Id, IndexNumber = number, IncludeItemTypes = [BaseItemKind.Episode] })
                             .Any(e => !Same(e.Path ?? "", video))))
                         throw new IOException("剧集编号冲突，保留已有条目：" + video);
+                    episode.SetParent(parent);
+                    if (library.FindByPath(video, null) is null) RepositoryGuard.CheckSiblingEpisodes(repository, episode);
                     var actualEpisode = Use(video, () => episode, parent, Existing(Path.ChangeExtension(video, ".nfo")), null, series, season);
                     if (actualEpisode.SeriesId != series.Id || actualEpisode.SeasonId != episode.SeasonId
                         || (actualEpisode.IndexNumber is int oldNumber && episode.IndexNumber is int newNumber && oldNumber != newNumber))
@@ -328,10 +340,19 @@ public sealed class Importer(ILibraryManager library, IItemRepository repository
             if (!string.IsNullOrEmpty(item.Path)) Check(item.Path);
             lock (RepositoryGuard.SaveGate)
             {
+                if (entry is { Item: Episode, Season: { IndexNumber: int number, Path: null or "" } parentSeason, Series: { } parentSeries }
+                    && FindNumberedSeason(parentSeries, number, Same(Path.GetDirectoryName(item.Path)!, parentSeries.Path) ? null : Path.GetDirectoryName(item.Path), op)?.Id != parentSeason.Id)
+                    throw new IOException($"保存前父级检查失败：第 {number} 季的无路径父级已变化，已保留现有条目");
                 // Parent may have been created earlier by this operation. Resolve it
                 // from the normal cache/repository; do not refresh or update it.
                 if (entry.Series is { } series)
                 {
+                    if (repository.RetrieveItem(series.Id) is not Series storedSeries
+                        || library.GetItemById(series.Id) is not Series cachedSeries
+                        || storedSeries.ParentId != series.ParentId || !Same(storedSeries.Path ?? "", series.Path ?? "")
+                        || storedSeries.GetPresentationUniqueKey() != cachedSeries.GetPresentationUniqueKey())
+                        throw new RepositoryProtectionException($"创建前 Series 身份或展示键不一致：ItemId={series.Id}");
+                    series = storedSeries;
                     if (item is Season s) { s.SeriesName = series.Name; s.SeriesPresentationUniqueKey = series.GetPresentationUniqueKey(); }
                     if (item is Episode e) { e.SeriesName = series.Name; e.SeriesPresentationUniqueKey = series.GetPresentationUniqueKey(); e.SeasonName = entry.Season?.Name; }
                 }
@@ -339,14 +360,258 @@ public sealed class Importer(ILibraryManager library, IItemRepository repository
                 using (RepositoryGuard.AppendScope([item.Id])) library.CreateItem(item, entry.Parent);
                 lock (op)
                 {
-                    op.Created.Add(new { item.Id, Type = item.GetType().Name, item.Path, item.Name, item.ParentId, item.IndexNumber, item.ParentIndexNumber });
+                    op.Created.Add(new { item.Id, Type = item.GetType().Name, item.Path, item.Name, item.ParentId, item.IndexNumber, item.ParentIndexNumber, MetadataOutcome = metadataResults[item.Id] });
                     if (item is Movie) MovieResult(op, item, "Created", metadataResults[item.Id]);
                 }
                 // Only this operation's freshly created ID, while holding the gate.
                 if (probeResults.TryGetValue(item.Id, out var info)) streams.SaveMediaStreams(item.Id, info.MediaStreams, ct);
             }
         }
+        if (request.ShouldFetchMetadata)
+        {
+            State(op, "Metadata", "新条目已保存，正在等待原生图片刷新");
+            var createdIds = pending.Select(entry => entry.Item.Id).ToHashSet();
+            foreach (var entry in pending)
+            {
+                ct.ThrowIfCancellationRequested();
+                var item = entry.Item;
+                try
+                {
+                    if (item is Folder && repository.GetItemList(new InternalItemsQuery { ParentId = item.Id,
+                        GroupByPresentationUniqueKey = false }).Any(child => !createdIds.Contains(child.Id) || child.IsVirtualItem))
+                        throw new RepositoryProtectionException("新文件夹存在非本次创建的子项，跳过原生刷新");
+                    if (item is Series newSeries)
+                    {
+                        var descendants = repository.GetItemList(new InternalItemsQuery
+                        {
+                            SeriesPresentationUniqueKey = newSeries.GetPresentationUniqueKey(),
+                            IncludeItemTypes = [BaseItemKind.Season, BaseItemKind.Episode],
+                            GroupByPresentationUniqueKey = false
+                        });
+                        if (descendants.Any(child => !createdIds.Contains(child.Id) || child.IsVirtualItem))
+                            throw new RepositoryProtectionException("新 Series 的展示关联包含既有或虚拟子项，跳过 Series 原生刷新");
+                    }
+                    using var updating = RepositoryGuard.NewItemMetadataScope(pending.Select(entry => entry.Item));
+                    SynchronizeNewLinks([entry], ct);
+                    var result = await providers.RefreshSingleItem(item, new MetadataRefreshOptions(inventory)
+                    {
+                        // Text providers already ran once during preparation. Native image services must still run.
+                        MetadataRefreshMode = MetadataRefreshMode.None,
+                        ImageRefreshMode = MetadataRefreshMode.FullRefresh,
+                        ReplaceAllMetadata = false, ReplaceAllImages = false, RemoveOldMetadata = false,
+                        ForceSave = false, IsAutomated = false
+                    }, ct);
+                    lock (op)
+                    {
+                        op.NativeRefresh.Add(new { item.Id, Type = item.GetType().Name, Outcome = "Returned",
+                            UpdateType = result.ToString(), HasPrimaryImage = item.HasImage(ImageType.Primary) });
+                        op.Warnings.Add($"原生图片刷新已返回：{item.Name}，主图={(item.HasImage(ImageType.Primary) ? "已登记" : "未获取")}；提供器内部失败仍以宿主日志为准");
+                    }
+                }
+                catch (Exception ex) when (ex is not OutOfMemoryException && !ct.IsCancellationRequested)
+                {
+                    lock (op)
+                    {
+                        op.NativeRefresh.Add(new { item.Id, Type = item.GetType().Name, Outcome = "Failed", Error = ex.GetType().Name,
+                            RepositoryFailure = ex is RepositoryProtectionException ? ex.Message : null, ex.StackTrace });
+                        op.Warnings.Add($"条目已新增，原生图片刷新未完成：{item.Name}（{ex.GetType().Name}，ItemId={item.Id}）"
+                            + (ex is RepositoryProtectionException ? "：" + ex.Message : ""));
+                    }
+                }
+                // Native Series refresh can recompute its presentation key even in metadata None mode.
+                // Use the persisted parent key, including after partial refresh failure; never authorize old children.
+                if (item is Series)
+                {
+                    try
+                    {
+                        using var updating = RepositoryGuard.NewItemMetadataScope(pending.Select(child => child.Item));
+                        SynchronizeNewLinks(pending.Where(child => child.Series?.Id == item.Id && child.Item.Id != item.Id), ct);
+                    }
+                    catch (Exception ex) when (ex is RepositoryProtectionException)
+                    {
+                        lock (op) op.Warnings.Add($"新季集展示关联同步未完成：Series={item.Id}：{ex.Message}");
+                    }
+                }
+            }
+        }
+        foreach (var series in planned.Values.OfType<Series>())
+            DiagnoseSeasonVisibility(series, planned.Values.OfType<Episode>().ToArray(), op);
         State(op, "Completed", pending.Count == 0 ? "目标条目已存在，未刷新或修改" : $"已追加 {pending.Count} 个条目；未请求媒体库扫描或祖先刷新");
+    }
+
+    private void SynchronizeNewLinks(IEnumerable<Pending> entries, CancellationToken ct)
+    {
+        foreach (var entry in entries)
+        {
+            if (entry.Series is not { } parent || entry.Item is not (Season or Episode)) continue;
+            if (repository.RetrieveItem(parent.Id) is not Series stored || library.GetItemById(parent.Id) is not Series cached
+                || stored.ParentId != parent.ParentId || !Same(stored.Path ?? "", parent.Path ?? "")
+                || stored.GetPresentationUniqueKey() != cached.GetPresentationUniqueKey())
+                throw new RepositoryProtectionException($"Series 仓储与缓存身份或展示键不一致：ItemId={parent.Id}");
+            var key = stored.GetPresentationUniqueKey();
+            var item = entry.Item;
+            var oldKey = item is Season season ? season.SeriesPresentationUniqueKey : ((Episode)item).SeriesPresentationUniqueKey;
+            if (oldKey == key && item.PresentationUniqueKey == item.CreatePresentationUniqueKey()) continue;
+            if (item is Season s) s.SeriesPresentationUniqueKey = key;
+            if (item is Episode e) e.SeriesPresentationUniqueKey = key;
+            item.PresentationUniqueKey = item.CreatePresentationUniqueKey();
+            repository.SaveItems([item], ct);
+        }
+    }
+
+    private void DiagnoseSeasonVisibility(Series series, IReadOnlyList<Episode> episodes, Operation op)
+    {
+        try
+        {
+            using var readOnly = RepositoryGuard.ReadOnlyScope();
+            var rows = repository.GetItemList(new InternalItemsQuery
+            {
+                ParentId = series.Id, IncludeItemTypes = [BaseItemKind.Season],
+                GroupByPresentationUniqueKey = false
+            });
+            var visible = library.GetItemList(new InternalItemsQuery
+            {
+                SeriesPresentationUniqueKey = series.GetPresentationUniqueKey(),
+                IncludeItemTypes = [BaseItemKind.Season],
+                DtoOptions = new MediaBrowser.Controller.Dto.DtoOptions(false)
+            });
+            var evidence = new List<object>();
+            void Add(string source, BaseItem? item) => evidence.Add(new
+            {
+                Source = source, Present = item is not null, item?.Id, Type = item?.GetType().Name,
+                item?.ParentId, SeriesId = item is Season season ? season.SeriesId : (item as Episode)?.SeriesId,
+                SeasonId = (item as Episode)?.SeasonId, item?.IndexNumber, item?.ParentIndexNumber,
+                item?.PresentationUniqueKey,
+                SeriesPresentationUniqueKey = item is Season s ? s.SeriesPresentationUniqueKey : (item as Episode)?.SeriesPresentationUniqueKey,
+                item?.IsVirtualItem, IsMissingEpisode = (item as Episode)?.IsMissingEpisode,
+                LocationType = item?.LocationType.ToString(), item?.Path
+            });
+            Add("Series.Operation", series);
+            Add("Series.Repository", repository.RetrieveItem(series.Id));
+            Add("Series.Library", library.GetItemById(series.Id));
+            foreach (var row in rows)
+            {
+                Add("Season.ParentQuery", row);
+                Add("Season.RepositoryById", repository.RetrieveItem(row.Id));
+                Add("Season.LibraryById", library.GetItemById(row.Id));
+                if (row is Season season && (!visible.Any(item => item.Id == row.Id)
+                    || !string.Equals(season.SeriesPresentationUniqueKey, series.GetPresentationUniqueKey(), StringComparison.Ordinal)))
+                {
+                    lock (op) op.Warnings.Add($"季展示关联待确认：{row.Id}（{row.Path}），SeriesKey={series.GetPresentationUniqueKey()}，Season.SeriesKey={season.SeriesPresentationUniqueKey}，无用户筛选季列表包含={visible.Any(item => item.Id == row.Id)}");
+                }
+            }
+            foreach (var episode in episodes)
+            {
+                Add("Episode.Operation", episode);
+                Add("Episode.Repository", repository.RetrieveItem(episode.Id));
+            }
+            evidence.Add(new { Source = "Series key query (no user filter)", Ids = visible.Select(item => item.Id).ToArray(),
+                UserVisibilityVerified = false, HttpApiVerified = false });
+            lock (op) op.Warnings.Add("季展示只读诊断 " + System.Text.Json.JsonSerializer.Serialize(evidence));
+        }
+        catch (Exception ex) when (ex is not OutOfMemoryException)
+        {
+            lock (op) op.Warnings.Add("季展示诊断未完成：" + ex.GetType().Name + "；已保存的条目保留");
+        }
+    }
+
+    private Season? FindNumberedSeason(Series series, int number, string? directory, Operation op, Season? candidate = null)
+    {
+        var rows = repository.GetItemList(new InternalItemsQuery
+            { ParentId = series.Id, IndexNumber = number, IncludeItemTypes = [BaseItemKind.Season] });
+        var context = $"仓储第 {number} 季（目标：{directory ?? series.Path}）";
+        try
+        {
+            if (rows.Count == 0) return null;
+            var exact = directory is null ? [] : rows.Where(row => Same(row.Path ?? "", directory)).ToArray();
+            if (rows.Count != 1 && exact.Length != 1)
+                throw new IOException(context + $"：异常记录，查询返回 {rows.Count} 条，精确路径匹配 {exact.Length} 条，无法唯一选择，已保留");
+            var selected = exact.Length == 1 ? exact[0] : rows[0];
+            if (selected is not Season stored)
+                throw new IOException(context + $"：异常记录，Type={selected.GetType().FullName}，预期 Season，已保留");
+            var mismatches = new List<string>();
+            if (stored.Id == Guid.Empty) mismatches.Add("Id 为空");
+            if (stored.ParentId != series.Id) mismatches.Add($"ParentId={stored.ParentId}，预期 {series.Id}");
+            if (stored.SeriesId != series.Id) mismatches.Add($"SeriesId={stored.SeriesId}，预期 {series.Id}");
+            if (stored.IndexNumber != number) mismatches.Add($"IndexNumber={stored.IndexNumber}，预期 {number}");
+            if (mismatches.Count != 0)
+                throw new IOException(context + "：异常记录，" + string.Join("；", mismatches) + "，已保留");
+
+            if (repository.RetrieveItem(series.Id) is not Series storedSeries || storedSeries.ParentId != series.ParentId
+                || !Same(storedSeries.Path ?? "", series.Path ?? ""))
+                throw new IOException(context + "：系列身份无法确认，可能有历史残留季，已保留");
+            if (stored.IsVirtualItem)
+                throw new IOException(context + $"：已有同编号虚拟季（{stored.Path ?? "无路径"}），需先验证能安全转为可见季，已保留");
+            if (directory is not null && !string.IsNullOrEmpty(stored.Path) && !Same(stored.Path, directory))
+                throw new IOException(context + $"：已有同编号真实季，路径不同（{stored.Path}），已保留");
+
+            if (library.GetItemById(stored.Id) is not Season cached || cached.Id != stored.Id
+                || cached.ParentId != stored.ParentId || cached.SeriesId != stored.SeriesId || cached.IndexNumber != stored.IndexNumber
+                || cached.IsVirtualItem != stored.IsVirtualItem || !Same(cached.Path ?? "", stored.Path ?? ""))
+                throw new IOException(context + "：仓储和宿主返回的季身份或对象状态不一致，已保留");
+            if (directory is not null)
+            {
+                var byPath = library.FindByPath(directory, null);
+                if (string.IsNullOrEmpty(stored.Path) && byPath is null) return cached;
+                if (byPath is not Season pathSeason || pathSeason.Id != stored.Id
+                    || pathSeason.ParentId != stored.ParentId || pathSeason.SeriesId != stored.SeriesId
+                    || pathSeason.IndexNumber != number || pathSeason.IsVirtualItem || !Same(pathSeason.Path ?? "", directory))
+                    throw new IOException(context + "：仓储记录与路径查询的 ID、父级或对象状态不一致，已保留");
+                var pathRows = repository.GetItemList(new InternalItemsQuery { Path = directory });
+                if (pathRows.Count != 1 || pathRows[0].Id != stored.Id)
+                    throw new IOException(context + "：精确路径仓储查询不唯一或 ID 不一致，已保留");
+                if (rows.Count > 1)
+                {
+                    var warning = $"复用已有目标季 {stored.Id}（{directory}）；保留其它同编号记录：" +
+                        string.Join("；", rows.Where(row => row.Id != stored.Id).Select(row => $"{row.Id}（{row.Path ?? "无路径"}）"));
+                    lock (op) { if (!op.Warnings.Contains(warning)) op.Warnings.Add(warning); }
+                }
+                return pathSeason;
+            }
+            return cached;
+        }
+        catch (IOException)
+        {
+            // Read-only evidence is captured only on a conflict, through the existing administrator details.
+            try
+            {
+                var targetId = directory is null ? Guid.Empty : library.GetNewItemId(directory, typeof(Season));
+                var evidence = new List<object>
+                {
+                    new { Source = "Expected", Type = "Season", Path = directory, Id = targetId,
+                        ParentId = series.Id, SeriesId = series.Id, IndexNumber = number },
+                    new { Source = "Query", ParentId = series.Id, IndexNumber = number,
+                        IncludeItemTypes = new[] { "Season" }, ReturnedCount = rows.Count }
+                };
+                void Add(string source, BaseItem? item) => evidence.Add(new
+                {
+                    Source = source, Present = item is not null, Id = item?.Id, Type = item?.GetType().FullName,
+                    item?.Path, item?.ParentId, SeriesId = (item as Season)?.SeriesId,
+                    item?.IndexNumber, item?.IsVirtualItem, LocationType = item?.LocationType.ToString()
+                });
+                Add("ResolverCandidate", candidate);
+                foreach (var row in rows)
+                {
+                    Add("Repository.GetItemList", row);
+                    Add("Repository.RetrieveItem", repository.RetrieveItem(row.Id));
+                    Add("Library.GetItemById (cache or repository)", library.GetItemById(row.Id));
+                }
+                Add("Series.Repository.RetrieveItem", repository.RetrieveItem(series.Id));
+                if (directory is not null)
+                {
+                    Add("Library.FindByPath", library.FindByPath(directory, null));
+                    Add("TargetId.Repository.RetrieveItem", repository.RetrieveItem(targetId));
+                    foreach (var row in repository.GetItemList(new InternalItemsQuery { Path = directory }))
+                        Add("TargetPath.Repository.GetItemList", row);
+                }
+                lock (op) op.Warnings.Add("季冲突只读诊断 " + System.Text.Json.JsonSerializer.Serialize(evidence));
+            }
+            catch (Exception diagnosticError) when (diagnosticError is not OutOfMemoryException)
+            {
+                lock (op) op.Warnings.Add("季冲突补充诊断未完成：" + diagnosticError.GetType().Name);
+            }
+            throw;
+        }
     }
 
     private static string? Existing(params string[] paths)

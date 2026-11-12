@@ -6,10 +6,19 @@ using MediaBrowser.Controller.Providers;
 using MediaBrowser.Controller.Entities.Movies;
 public sealed class ProviderStub : IProviderManager {
 public int Selections;
+public List<Guid> Refreshed = [];
+public Func<MediaBrowser.Controller.Entities.BaseItem, MetadataRefreshOptions, System.Threading.CancellationToken,
+    System.Threading.Tasks.Task<MediaBrowser.Controller.Library.ItemUpdateType>> Refresh;
+
 public IMetadataProvider<Movie>[] Selected = [];
 public void QueueRefresh(System.Guid @itemId,MediaBrowser.Controller.Providers.MetadataRefreshOptions @options,MediaBrowser.Controller.Providers.RefreshPriority @priority) => throw new Exception("Unexpected provider call: QueueRefresh");
 public System.Threading.Tasks.Task RefreshFullItem(MediaBrowser.Controller.Entities.BaseItem @item,MediaBrowser.Controller.Providers.MetadataRefreshOptions @options,System.Threading.CancellationToken @cancellationToken) => throw new Exception("Unexpected provider call: RefreshFullItem");
-public System.Threading.Tasks.Task<MediaBrowser.Controller.Library.ItemUpdateType> RefreshSingleItem(MediaBrowser.Controller.Entities.BaseItem @item,MediaBrowser.Controller.Providers.MetadataRefreshOptions @options,System.Threading.CancellationToken @cancellationToken) => throw new Exception("Unexpected provider call: RefreshSingleItem");
+public System.Threading.Tasks.Task<MediaBrowser.Controller.Library.ItemUpdateType> RefreshSingleItem(MediaBrowser.Controller.Entities.BaseItem @item,MediaBrowser.Controller.Providers.MetadataRefreshOptions @options,System.Threading.CancellationToken @cancellationToken) {
+    Refreshed.Add(item.Id);
+    if (options.MetadataRefreshMode != MetadataRefreshMode.None || options.ImageRefreshMode != MetadataRefreshMode.FullRefresh
+        || options.ReplaceAllMetadata || options.ReplaceAllImages || options.RemoveOldMetadata) throw new Exception("Unsafe refresh options");
+    return Refresh?.Invoke(item, options, cancellationToken) ?? System.Threading.Tasks.Task.FromResult(MediaBrowser.Controller.Library.ItemUpdateType.None);
+}
 public System.Threading.Tasks.Task SaveImage(MediaBrowser.Controller.Entities.BaseItem @item,System.String @url,MediaBrowser.Model.Entities.ImageType @type,System.Nullable<System.Int32> @imageIndex,System.Threading.CancellationToken @cancellationToken) => throw new Exception("Unexpected provider call: SaveImage");
 public System.Threading.Tasks.Task SaveImage(MediaBrowser.Controller.Entities.BaseItem @item,System.IO.Stream @source,System.String @mimeType,MediaBrowser.Model.Entities.ImageType @type,System.Nullable<System.Int32> @imageIndex,System.Threading.CancellationToken @cancellationToken) => throw new Exception("Unexpected provider call: SaveImage");
 public System.Threading.Tasks.Task SaveImage(MediaBrowser.Controller.Entities.BaseItem @item,System.String @source,System.String @mimeType,MediaBrowser.Model.Entities.ImageType @type,System.Nullable<System.Int32> @imageIndex,System.Nullable<System.Boolean> @saveLocallyWithMedia,System.Threading.CancellationToken @cancellationToken) => throw new Exception("Unexpected provider call: SaveImage");

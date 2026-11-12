@@ -196,7 +196,8 @@ async function poll(){
  try{const s=await api('ScopedImport/Operations/'+encodeURIComponent(queried));if(operation!==queried)return;
   const message=s.Message.replace(/^0\.1 版暂不支持 ISO\/光盘目录或链接媒体，未创建任何条目$/, '暂不支持 ISO、光盘或链接媒体，请选择普通视频目录。');
   output.textContent=message+'\n新增 '+s.Created.length+' 项，跳过 '+s.Skipped.length+' 项'
-   +(s.MetadataProviders?.length?'\n元数据：'+[...new Set(s.MetadataProviders.map(x=>providerLabels[x.Outcome]||x.Outcome))].join('、'):'');
+   +(s.MetadataProviders?.length?'\n元数据：'+[...new Set(s.MetadataProviders.map(x=>providerLabels[x.Outcome]||x.Outcome))].join('、'):'')
+   +(s.NativeRefresh?.length?'\n原生图片刷新返回 '+s.NativeRefresh.filter(x=>x.Outcome==='Returned').length+' 项，失败 '+s.NativeRefresh.filter(x=>x.Outcome==='Failed').length+' 项；主图已登记 '+s.NativeRefresh.filter(x=>x.HasPrimaryImage).length+' 项':'');
   getElement('siDetails').hidden=false;
   getElement('siLog').textContent=['操作编号：'+queried,...s.Created.map(x=>x.Type+'：'+x.Name),...s.Warnings,
    ...(s.MetadataProviders||[]).map(x=>x.Type+' / '+x.Provider+'：'+(providerLabels[x.Outcome]||x.Outcome)),

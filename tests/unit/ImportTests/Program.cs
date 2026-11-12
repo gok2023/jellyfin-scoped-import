@@ -200,6 +200,233 @@ await Test("numbered seasons append and true episode conflicts preserve rows", a
     Assert(conflict.GetProperty("State").GetString() == "Rejected" && h.Created.Count == 5, conflict.ToString());
 });
 
+foreach (var scenario in new[] { "new", "pathless", "virtual", "different path", "orphan", "duplicate plan", "wrong series" })
+{
+    await Test("Season 04: " + scenario, async () =>
+    {
+        var h = new Harness(Path.Combine(fixtureRoot, Guid.NewGuid().ToString("N")), television: true);
+        string AddSeason(int number, string name)
+        {
+            var path = Path.Combine(h.Target, name);
+            Directory.CreateDirectory(path);
+            File.WriteAllBytes(Path.Combine(path, $"Show S{number:00}E01.mkv"), [0]);
+            return path;
+        }
+        for (var number = 1; number <= 3; number++)
+        {
+            var initial = await h.Finish(h.Start(false, AddSeason(number, $"Season {number:00}")));
+            Assert(initial.GetProperty("State").GetString() == "Completed", initial.ToString());
+        }
+
+        var series = (MediaBrowser.Controller.Entities.TV.Series)h.Created[0];
+        var directory = AddSeason(4, "Season 04");
+        var placeholder = new MediaBrowser.Controller.Entities.TV.Season
+        {
+            Id = Guid.NewGuid(), SeriesId = series.Id, IndexNumber = 4, Name = "Preserve title",
+            IsVirtualItem = scenario == "virtual", Path = scenario == "different path" ? Path.Combine(h.Target, "Season 4") : null
+        };
+        placeholder.SetParent(series);
+        if (scenario is "pathless" or "virtual" or "different path" or "orphan" or "wrong series") h.Store.Add(placeholder.Id, placeholder);
+        if (scenario == "wrong series") placeholder.SeriesId = Guid.NewGuid();
+        if (scenario == "orphan") h.Store.Remove(series.Id);
+        if (scenario == "duplicate plan") AddSeason(4, "Season 4");
+
+        var status = await h.Finish(h.Start(false, scenario == "duplicate plan" ? h.Target : directory));
+        var failure = scenario switch
+        {
+            "virtual" => "虚拟季", "different path" => "路径不同",
+            "orphan" => "历史残留", "duplicate plan" => "规划冲突", "wrong series" => "SeriesId=", _ => null
+        };
+        if (failure is not null)
+        {
+            Assert(status.GetProperty("State").GetString() == "Rejected"
+                && status.GetProperty("Message").GetString()!.Contains(failure) && h.Created.Count == 7, status.ToString());
+            if (scenario != "duplicate plan")
+            {
+                var diagnostic = status.GetProperty("Warnings").EnumerateArray().Select(x => x.GetString()!)
+                    .Single(x => x.StartsWith("季冲突只读诊断 "));
+                using var evidence = JsonDocument.Parse(diagnostic["季冲突只读诊断 ".Length..]);
+                Assert(evidence.RootElement.EnumerateArray().Any(x => x.GetProperty("Source").GetString() == "Repository.GetItemList"
+                    && x.GetProperty("Id").GetGuid() == placeholder.Id
+                    && x.GetProperty("SeriesId").GetGuid() == placeholder.SeriesId), "missing exact row evidence");
+            }
+            return;
+        }
+
+        Assert(status.GetProperty("State").GetString() == "Completed", status.ToString());
+        var season = h.Store.Values.OfType<MediaBrowser.Controller.Entities.TV.Season>().Single(s => s.IndexNumber == 4);
+        var episode = (MediaBrowser.Controller.Entities.TV.Episode)h.Created[^1];
+        Assert(season.ParentId == series.Id && season.SeriesId == series.Id && season.Path == (scenario == "pathless" ? null : directory)
+            && episode.ParentId == season.Id && episode.SeasonId == season.Id && episode.SeriesId == series.Id
+            && episode.IndexNumber == 1 && episode.ParentIndexNumber == 4
+            && episode.Path == Path.Combine(directory, "Show S04E01.mkv"), "season or episode identity");
+        if (scenario == "pathless")
+            Assert(season.Id == placeholder.Id && season.Name == "Preserve title" && h.Created.Count == 8, "placeholder was replaced");
+        var fifth = await h.Finish(h.Start(false, AddSeason(5, "Season 05")));
+        Assert(fifth.GetProperty("State").GetString() == "Completed", fifth.ToString());
+        var fifthEpisode = (MediaBrowser.Controller.Entities.TV.Episode)h.Created[^1];
+        Assert(fifthEpisode.ParentIndexNumber == 5 && fifthEpisode.SeriesId == series.Id
+            && fifthEpisode.SeasonId == h.Created[^2].Id, "fifth season relationship");
+        var repeat = await h.Finish(h.Start(false, directory));
+        Assert(repeat.GetProperty("State").GetString() == "Completed"
+            && repeat.GetProperty("Created").GetArrayLength() == 0 && h.Unrelated.Name == "untouched", repeat.ToString());
+    });
+}
+
+foreach (var conflictingEpisode in new[] { false, true })
+{
+    await Test("exact Season 04 wins over missing Season 04(1), conflict=" + conflictingEpisode, async () =>
+    {
+        var h = new Harness(Path.Combine(fixtureRoot, Guid.NewGuid().ToString("N")), television: true);
+        var directory = Path.Combine(h.Target, "Season 04");
+        Directory.CreateDirectory(directory);
+        File.WriteAllBytes(Path.Combine(directory, "Show S04E01.mkv"), [0]);
+        Assert((await h.Finish(h.Start(false, directory))).GetProperty("State").GetString() == "Completed", "initial");
+        var series = h.Created.OfType<MediaBrowser.Controller.Entities.TV.Series>().Single();
+        var target = h.Created.OfType<MediaBrowser.Controller.Entities.TV.Season>().Single();
+        var other = new MediaBrowser.Controller.Entities.TV.Season
+        {
+            Id = Guid.NewGuid(), Path = Path.Combine(h.Target, "Season 04(1)"), IndexNumber = 4,
+            SeriesId = series.Id, Name = "Keep other", Overview = "Keep metadata"
+        };
+        other.SetParent(series);
+        h.Store.Add(other.Id, other);
+        Assert(!Directory.Exists(other.Path), "other path should be absent");
+        if (conflictingEpisode)
+        {
+            var existing = new MediaBrowser.Controller.Entities.TV.Episode
+            {
+                Id = Guid.NewGuid(), SeriesId = series.Id, SeasonId = other.Id, ParentIndexNumber = 4,
+                IndexNumber = 2, Path = Path.Combine(other.Path, "Show S04E02.mkv")
+            };
+            existing.SetParent(other);
+            h.Store.Add(existing.Id, existing);
+        }
+        target.SeriesPresentationUniqueKey = "stale-series-key";
+        File.WriteAllBytes(Path.Combine(directory, "Show S04E02.mkv"), [0]);
+        var result = await h.Finish(h.Start(false, directory));
+        Assert(result.GetProperty("State").GetString() == (conflictingEpisode ? "Rejected" : "Completed"), result.ToString());
+        Assert(h.Store.Values.OfType<MediaBrowser.Controller.Entities.TV.Season>().Count() == 2
+            && other.Name == "Keep other" && other.Overview == "Keep metadata" && other.ParentId == series.Id, "other season changed");
+        if (!conflictingEpisode)
+        {
+            Assert(target.SeriesPresentationUniqueKey == "stale-series-key"
+                && result.GetProperty("Warnings").EnumerateArray().Any(x => x.GetString()!.Contains("季展示关联待确认")), "missing visibility diagnosis or existing season changed");
+            var added = (MediaBrowser.Controller.Entities.TV.Episode)h.Created[^1];
+            Assert(added.ParentId == target.Id && added.SeasonId == target.Id && added.SeriesId == series.Id
+                && added.IndexNumber == 2 && added.ParentIndexNumber == 4, "wrong episode identity");
+            var repeat = await h.Finish(h.Start(false, directory));
+            Assert(repeat.GetProperty("Created").GetArrayLength() == 0, repeat.ToString());
+        }
+        else Assert(result.GetProperty("Message").GetString()!.Contains("其它季存在剧集归属冲突"), result.ToString());
+    });
+}
+
+await Test("native refresh saves only created identity, preserves import on failure and skips offline/repeat", async () =>
+{
+    var h = New();
+    h.Providers.Refresh = (item, options, token) =>
+    {
+        Throws<RepositoryProtectionException>(() => h.Guarded.SaveItems([h.Unrelated], token));
+        Throws<RepositoryProtectionException>(() => h.Guarded.SaveImages(h.Unrelated));
+        Throws<RepositoryProtectionException>(() => h.Guarded.DeleteItem(item.Id));
+        var parent = item.ParentId;
+        item.ParentId = Guid.NewGuid();
+        Throws<RepositoryProtectionException>(() => h.Guarded.SaveItems([item], token));
+        Throws<RepositoryProtectionException>(() => h.Guarded.SaveImages(item));
+        item.ParentId = parent;
+        item.ImageInfos = [new ItemImageInfo { Path = "mock-image", Type = ImageType.Primary }];
+        h.Guarded.SaveImages(item);
+        h.Guarded.SaveItems([item], token);
+        h.Guarded.ReattachUserDataAsync(item, token).GetAwaiter().GetResult();
+        return Task.FromResult(ItemUpdateType.ImageUpdate);
+    };
+    var first = await h.Run(true);
+    Assert(first.GetProperty("State").GetString() == "Completed" && h.Providers.Refreshed.Count == 1
+        && first.GetProperty("NativeRefresh")[0].GetProperty("HasPrimaryImage").GetBoolean(), first.ToString());
+    await h.Run(true);
+    Assert(h.Providers.Refreshed.Count == 1 && h.Unrelated.Name == "untouched", "existing refresh");
+    var offline = New();
+    await offline.Run(false);
+    Assert(offline.Providers.Refreshed.Count == 0, "offline native call");
+    var failure = New();
+    failure.Providers.Refresh = (item, options, token) => throw new IOException("mock image failure");
+    var status = await failure.Run(true);
+    Assert(status.GetProperty("State").GetString() == "Completed" && failure.Created.Count == 1
+        && status.GetProperty("NativeRefresh")[0].GetProperty("Outcome").GetString() == "Failed", status.ToString());
+});
+
+await Test("native refresh targets follow new series, season and episode hierarchy", async () =>
+{
+    var h = new Harness(Path.Combine(fixtureRoot, Guid.NewGuid().ToString("N")), television: true);
+    var firstDirectory = Path.Combine(h.Target, "Season 01");
+    Directory.CreateDirectory(firstDirectory);
+    File.WriteAllBytes(Path.Combine(firstDirectory, "Show S01E01.mkv"), [0]);
+    h.Providers.Refresh = (item, options, token) =>
+    {
+        // Simulate native BeforeSaveInternal changing the Series key after children were saved.
+        if (item is MediaBrowser.Controller.Entities.TV.Series) item.PresentationUniqueKey = "provider-final-key";
+        else
+        {
+            var key = item is MediaBrowser.Controller.Entities.TV.Season s ? s.SeriesPresentationUniqueKey
+                : ((MediaBrowser.Controller.Entities.TV.Episode)item).SeriesPresentationUniqueKey;
+            Assert(key == "provider-final-key", "child refresh saw stale series key");
+        }
+        h.Guarded.SaveItems([item], token);
+        h.Guarded.SaveImages(item);
+        return Task.FromResult(ItemUpdateType.ImageUpdate);
+    };
+    var initial = await h.Finish(h.Start(true, firstDirectory));
+    Assert(initial.GetProperty("State").GetString() == "Completed"
+        && h.Providers.Refreshed.SequenceEqual(h.Created.Select(item => item.Id)), initial.ToString());
+    var series = h.Created.OfType<MediaBrowser.Controller.Entities.TV.Series>().Single();
+    var season = h.Created.OfType<MediaBrowser.Controller.Entities.TV.Season>().Single();
+    Assert(season.SeriesPresentationUniqueKey == series.GetPresentationUniqueKey()
+        && season.PresentationUniqueKey == "provider-final-key-001"
+        && h.Created.OfType<MediaBrowser.Controller.Entities.TV.Episode>().All(e => e.SeriesPresentationUniqueKey == series.GetPresentationUniqueKey())
+        && series.GetSeasons(null, new MediaBrowser.Controller.Dto.DtoOptions(false)).Any(item => item.Id == season.Id),
+        "new season not present in native unfiltered query");
+    var secondDirectory = Path.Combine(h.Target, "Season 02");
+    Directory.CreateDirectory(secondDirectory);
+    File.WriteAllBytes(Path.Combine(secondDirectory, "Show S02E01.mkv"), [0]);
+    var before = h.Providers.Refreshed.Count;
+    await h.Finish(h.Start(true, secondDirectory));
+    Assert(h.Providers.Refreshed.Skip(before).SequenceEqual(h.Created.TakeLast(2).Select(item => item.Id)), "old series refreshed");
+    File.WriteAllBytes(Path.Combine(secondDirectory, "Show S02E02.mkv"), [0]);
+    before = h.Providers.Refreshed.Count;
+    await h.Finish(h.Start(true, secondDirectory));
+    Assert(h.Providers.Refreshed.Skip(before).SequenceEqual(new[] { h.Created[^1].Id }), "old season refreshed");
+});
+
+await Test("persisted Series key survives native failure and protection details identify the rejected write", async () =>
+{
+    var h = new Harness(Path.Combine(fixtureRoot, Guid.NewGuid().ToString("N")), television: true);
+    var directory = Path.Combine(h.Target, "Season 04");
+    Directory.CreateDirectory(directory);
+    File.WriteAllBytes(Path.Combine(directory, "Show S04E01.mkv"), [0]);
+    File.WriteAllBytes(Path.Combine(directory, "Show S04E02.mkv"), [0]);
+    h.Providers.Refresh = (item, options, token) =>
+    {
+        if (item is MediaBrowser.Controller.Entities.TV.Series)
+        {
+            item.PresentationUniqueKey = "persisted-before-failure";
+            h.Guarded.SaveItems([item], token);
+            h.Guarded.SaveImages(h.Unrelated);
+        }
+        return Task.FromResult(ItemUpdateType.None);
+    };
+    var result = await h.Finish(h.Start(true, directory));
+    var failure = result.GetProperty("NativeRefresh")[0];
+    Assert(failure.GetProperty("Outcome").GetString() == "Failed"
+        && failure.GetProperty("RepositoryFailure").GetString()!.Contains("SaveImages")
+        && failure.GetProperty("RepositoryFailure").GetString()!.Contains(h.Unrelated.Id.ToString())
+        && failure.GetProperty("StackTrace").GetString()!.Contains("RepositoryGuard"), result.ToString());
+    var series = h.Created.OfType<MediaBrowser.Controller.Entities.TV.Series>().Single();
+    Assert(series.GetSeasons(null, new MediaBrowser.Controller.Dto.DtoOptions(false)).Single().IndexNumber == 4
+        && h.Created.OfType<MediaBrowser.Controller.Entities.TV.Episode>().All(e => e.SeriesPresentationUniqueKey == "persisted-before-failure")
+        && h.Unrelated.Name == "untouched", "partial native failure left stale children");
+});
+
 await Test("NFO junction path remains fatal", () =>
 {
     var h=New();File.WriteAllText(h.Nfo,"<movie/>");var link=Path.Combine(fixtureRoot,"junction-"+Guid.NewGuid().ToString("N"));
@@ -300,6 +527,7 @@ public sealed class Harness
     public Dictionary<Guid,BaseItem> Store {get;}=[];
     public Movie Unrelated {get;}=new(){Id=Guid.NewGuid(),Name="untouched",Path="unrelated-sentinel"};
     public int ProviderSelections => providerStub.Selections;
+    public ProviderStub Providers => providerStub;
     public int Probes;
     private readonly ProviderStub providerStub = new();
     public IMetadataProvider<Movie>[] Selected { get => providerStub.Selected; set => providerStub.Selected = value; }
@@ -314,6 +542,7 @@ public sealed class Harness
             "RetrieveItem"=>Store.GetValueOrDefault((Guid)a![0]!),
             "GetItemList"=>Query((InternalItemsQuery)a![0]!),
             "SaveItems"=>Save((IReadOnlyList<BaseItem>)a![0]!),
+            "SaveImages"=>null,
             _=>throw new Exception("Unexpected repository call "+m.Name)});
         Guarded=DispatchProxy.Create<IItemRepository,RepositoryGuard>();((RepositoryGuard)(object)Guarded).Inner=inner;
         var library=Stub.Make<ILibraryManager>((m,a)=>m.Name switch {
@@ -321,6 +550,7 @@ public sealed class Harness
             "ResolvePaths"=> ((IEnumerable<MediaBrowser.Model.IO.FileSystemMetadata>)a![0]!).Select(entry =>
                 Resolve(entry, (Folder)a[2]!, television)),
             "FindByPath"=>Store.Values.FirstOrDefault(x=>x.Path==(string)a![0]!),
+            "GetItemList"=>Query((InternalItemsQuery)a![0]!),
             "GetLibraryOptions"=>new LibraryOptions(),
             "GetItemById"=>Store.GetValueOrDefault((Guid)a![0]!),
             "GetNewItemId"=>new Guid(System.Security.Cryptography.MD5.HashData(Encoding.UTF8.GetBytes((string)a![0]!))),
@@ -330,6 +560,8 @@ public sealed class Harness
         var encoder=Stub.Make<IMediaEncoder>((m,a)=>{if(m.Name!="GetMediaInfo")throw new Exception("Unexpected encoder call "+m.Name);Probes++;return Task.FromResult(new MediaInfo{Container="matroska",MediaStreams=[]});});
         var streams=Stub.Make<IMediaStreamRepository>((m,a)=>{if(m.Name!="SaveMediaStreams")throw new Exception("Unexpected streams call "+m.Name);return null;});
         var config=Stub.Make<IServerConfigurationManager>((m,a)=>m.Name=="get_Configuration"?new ServerConfiguration():throw new Exception("Unexpected config call "+m.Name));
+        BaseItem.FileSystem = Stub.Make<MediaBrowser.Model.IO.IFileSystem>((m,a) => m.Name == "IsPathFile"
+            ? Path.IsPathRooted((string)a![0]!) : throw new Exception("Unexpected filesystem call " + m.Name));
         BaseItem.LibraryManager=library;BaseItem.ItemRepository=Guarded;BaseItem.ConfigurationManager=config;BaseItem.Logger=NullLogger<BaseItem>.Instance;
         importer=new(library,Guarded,providers,encoder,streams,new NamingOptions(),config);
     }
@@ -342,8 +574,8 @@ public sealed class Harness
                 IndexNumber = Emby.Naming.TV.SeasonPathParser.Parse(entry.FullName, series.Path, true, true).SeasonNumber };
         return new MediaBrowser.Controller.Entities.TV.Series { Path = entry.FullName, Name = entry.Name };
     }
-    private List<BaseItem> Query(InternalItemsQuery q)=>Store.Values.Where(x=>(q.Path is null || x.Path==q.Path) && (q.ParentId==Guid.Empty || x.ParentId==q.ParentId) && (!q.IndexNumber.HasValue || x.IndexNumber==q.IndexNumber)).ToList();
-    private object? Save(IReadOnlyList<BaseItem> items){foreach(var item in items)Store.Add(item.Id,item);return null;}
+    private List<BaseItem> Query(InternalItemsQuery q)=>Store.Values.Where(x=>(q.SeriesPresentationUniqueKey is null || (x is MediaBrowser.Controller.Entities.TV.Season season && season.SeriesPresentationUniqueKey == q.SeriesPresentationUniqueKey) || (x is MediaBrowser.Controller.Entities.TV.Episode episode && episode.SeriesPresentationUniqueKey == q.SeriesPresentationUniqueKey)) && (q.IncludeItemTypes.Length == 0 || q.IncludeItemTypes.Any(type => type.ToString() == x.GetType().Name)) && (q.Path is null || x.Path==q.Path) && (q.ParentId==Guid.Empty || x.ParentId==q.ParentId) && (!q.IndexNumber.HasValue || x.IndexNumber==q.IndexNumber)).ToList();
+    private object? Save(IReadOnlyList<BaseItem> items){foreach(var item in items)Store[item.Id]=item;return null;}
     private object? Create(BaseItem item){Guarded.SaveItems([item],CancellationToken.None);Created.Add(item);return null;}
     public Guid Start(bool fetch, string? path = null)=>JsonSerializer.SerializeToElement(importer.Start(new(path ?? Target,FetchMetadata:fetch))).GetProperty("OperationId").GetGuid();
     public async Task<JsonElement> Finish(Guid id)

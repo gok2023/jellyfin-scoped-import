@@ -10,11 +10,11 @@
 pwsh -NoProfile -File scripts/test.ps1
 ```
 
-Node 页面测试使用 VM 和假的 XMLHttpRequest/ApiClient，不发送网络请求。命名测试只调用纯解析逻辑，不创建媒体文件。ImportTests 使用当前 Importer/RepositoryGuard 源码、真实 Jellyfin 模型和内存接口替身，在忽略的 `artifacts/import-fixtures-*` 下创建合成 NFO、一个字节的假视频和目录联接；不运行编码器、宿主或数据库。21 组覆盖 NFO 内容降级/DTD 多编码/大小/访问/重解析限制、剧集编号歧义、元数据输入与合并、提供器结果、整体取消、任务锁、重复入库和操作不存在/正常响应的控制器契约；其中一项实际等待 30 秒的合作取消。ProviderStub 对完整刷新、远程图片及其他未预期服务调用均抛错。
+Node 页面测试使用 VM 和假的 XMLHttpRequest/ApiClient，不发送网络请求。命名测试只调用纯解析逻辑，不创建媒体文件。ImportTests 使用当前 Importer/RepositoryGuard 源码、真实 Jellyfin 模型和内存接口替身，在忽略的 `artifacts/import-fixtures-*` 下创建合成 NFO、一个字节的假视频和目录联接；不运行编码器、宿主或数据库。36 组覆盖 NFO 内容降级/DTD 多编码/大小/访问/重解析限制、剧集编号歧义、元数据输入与合并、提供器结果、整体取消、任务锁、重复入库和操作不存在/正常响应的控制器契约；其中一项实际等待 30 秒的合作取消。ProviderStub 模拟受控 RefreshSingleItem 与图片登记，对完整刷新、排队及其它未预期服务调用抛错；不实际下载图片。
 
 锁文件的 `testRuntimeReferences` 固定一个 Jellyfin.Database.Implementations.dll（BaseItem 构造所需），bootstrap 从同一已校验官方归档提取，test.ps1 先核摘要。该 DLL 不作为插件引用，不进入插件 ZIP。两套页面增加 18 个 VM 场景，覆盖根/自定义基础路径、三种终态、模式切换、失败重查、操作恢复、已有项指引和准确 ItemId 详情链接。Python 门禁测试验证默认拒绝、生产端口/外部地址拒绝、错误目录、伪标记、路径逃逸、凭据脱敏及禁止扫描/关闭服务请求。
 
-`test-operation-recovery.cjs` 的 33 个 VM 场景先在补修前复现两页旧编号 404 无法恢复（0 通过、2 失败），再验证修复：专用错误码与对应编号、重复/重叠查询、刷新恢复、显式结束跟踪、就绪拒绝、网络与空超时拒绝、401/403、代理 404/错误编号或错误码、服务故障、不自动重发、local/library 新模式及新编号、服务器/基础路径隔离和旧键显式迁移。配置页替身覆盖 ApiClient 1.11.0 的 Fetch Response.status/json() 拒绝，并兼容 responseJSON/responseText 测试形状。控制器测试直接调用 action，未启动 ASP.NET/Jellyfin，因此不是实际 HTTP 中间件或反向代理验收。
+`test-operation-recovery.cjs` 的 35 个 VM 场景先在补修前复现两页旧编号 404 无法恢复（0 通过、2 失败），再验证修复：专用错误码与对应编号、重复/重叠查询、刷新恢复、显式结束跟踪、就绪拒绝、网络与空超时拒绝、401/403、代理 404/错误编号或错误码、服务故障、不自动重发、local/library 新模式及新编号、服务器/基础路径隔离和旧键显式迁移。配置页替身覆盖 ApiClient 1.11.0 的 Fetch Response.status/json() 拒绝，并兼容 responseJSON/responseText 测试形状。控制器测试直接调用 action，未启动 ASP.NET/Jellyfin，因此不是实际 HTTP 中间件或反向代理验收。
 
 0.2.0.3 的 ImportTests 用解析器接口替身和真实 Emby.Naming 测试合成剪辑目录、无编号季集、定向追加、重复提交、编号冲突以及 NFO 标题与编号的边界。替身测试验证写入参数与仓储保护。真实宿主解析、持久化、刷新后的展示仍需隔离验收。
 
@@ -47,3 +47,16 @@ Node 页面测试使用 VM 和假的 XMLHttpRequest/ApiClient，不发送网络�
 人工验收隔离协议与创建基线后，以 `python -B tests/integration/test_scoped_import.py` 等入口显式执行；不要使用生产凭据。失败可能留下 fixture 用户/条目/样片，恢复方式是丢弃整个已证明隔离的宿主并重新建立，不对生产作任何操作。当前工具不自动清理或删除宿主。
 
 进程、监听和路径检查只能降低误连风险，不构成针对恶意本机用户或验证期间目录/进程竞争替换的安全边界。测试期间宿主目录应由单一受信任操作者控制。
+
+
+### 第四季冲突离线回归
+
+ImportTests 在合成目录中逐季建立前三季，再覆盖第四季新增、同路径重复提交、非虚拟无路径季复用、虚拟季保留、异路径真实季、模拟系列删除后的残留季及操作内重复编号。检查 Season 和 Episode 的路径、父级、系列 ID、季集编号和既有记录保留。测试使用仓储和宿主替身，真实 Jellyfin 季列表、数据库持久化与图片下载仍需在隔离宿主中验证。
+
+季冲突诊断回归还检查错误 SeriesId 的实际字段和仓储对象证据，并在成功的第四季后继续新增第五季检查父子关系。
+
+双季回归在文件系统仅存在 Season 04 时，构造同父级同编号 Season 04(1) 仓储条目，验证精确季追加、重复提交及另一季同编号 Episode 阻断，并保留两季 ID、父级和元数据。
+
+原生刷新替身覆盖新增目标调用、None/FullRefresh 选项、图片登记结果、已有对象/删除/身份变化写入拦截、重复及离线跳过、刷新失败保留条目。过期季展示键测试检查无用户过滤查询与父级查询差异。未验证真实 HTTP、用户过滤或图片下载。
+
+本轮补充：SaveImages 允许本次新 ID，拒绝无关 ID/父级变化；模拟 Series 原生刷新改变展示键及保存后失败，核对季自身键、多个 Episode 关联键、Series.GetSeasons 返回和保护异常方法/ItemId/调用栈。仍使用内存仓储，不代表真实数据库、远程图片或历史记录修复验收。
