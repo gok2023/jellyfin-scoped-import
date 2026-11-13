@@ -17,6 +17,12 @@ using Emby.Naming.Common;
 using Microsoft.Extensions.Logging.Abstractions;
 
 
+if (args is ["--repository-delete"])
+{
+    await TestRepositoryDelete();
+    return;
+}
+
 var fixtureRoot = Path.Combine(Environment.CurrentDirectory, "artifacts", "import-fixtures-" + Guid.NewGuid().ToString("N"));
 Directory.CreateDirectory(fixtureRoot);
 var count = 0;
@@ -25,6 +31,27 @@ async Task Test(string name, Func<Task> test) { await test(); count++; Console.W
 void Throws<T>(Action action) where T : Exception { try { action(); } catch (T) { return; } throw new Exception("Expected " + typeof(T).Name); }
 Harness New() => new(Path.Combine(fixtureRoot, Guid.NewGuid().ToString("N")));
 string Meta(JsonElement status) => status.GetProperty("Movies")[0].GetProperty("MetadataStatus").GetString()!;
+Task TestRepositoryDelete()
+{
+    Guid first = Guid.NewGuid(), second = Guid.NewGuid();
+    var calls = 0;
+    var guarded = DispatchProxy.Create<IItemRepository, RepositoryGuard>();
+    ((RepositoryGuard)(object)guarded).Inner = Stub.Make<IItemRepository>((method, arguments) =>
+    {
+        Assert(method.Name == "DeleteItem" && ((IReadOnlyList<Guid>)arguments![0]!).SequenceEqual([first, second]),
+            "expected both IDs forwarded in order");
+        calls++;
+        return null;
+    });
+    guarded.DeleteItem([first, second]);
+    var entry = JsonSerializer.SerializeToElement(RepositoryGuard.Audit()).GetProperty("Entries").EnumerateArray().Last();
+    Assert(calls == 1 && entry.GetProperty("Method").GetString() == "DeleteItem"
+        && entry.GetProperty("Ids").EnumerateArray().Select(id => id.GetGuid()).SequenceEqual([first, second]),
+        "expected one delete call and both IDs in the audit");
+    Console.WriteLine("PASS: repository delete forwards and audits both IDs");
+    return Task.CompletedTask;
+}
+await TestRepositoryDelete();
 await Test("native folder picker resolves configured locations, validates results and serializes STA requests", async () =>
 {
     if (!OperatingSystem.IsWindows()) throw new PlatformNotSupportedException();
@@ -329,7 +356,7 @@ await Test("native refresh saves only created identity, preserves import on fail
     {
         Throws<RepositoryProtectionException>(() => h.Guarded.SaveItems([h.Unrelated], token));
         Throws<RepositoryProtectionException>(() => h.Guarded.SaveImages(h.Unrelated));
-        Throws<RepositoryProtectionException>(() => h.Guarded.DeleteItem(item.Id));
+        Throws<RepositoryProtectionException>(() => h.Guarded.DeleteItem([item.Id]));
         var parent = item.ParentId;
         item.ParentId = Guid.NewGuid();
         Throws<RepositoryProtectionException>(() => h.Guarded.SaveItems([item], token));

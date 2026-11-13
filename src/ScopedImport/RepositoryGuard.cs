@@ -169,7 +169,7 @@ public class RepositoryGuard : DispatchProxy
                 var result = Forward(method, args);
                 var ids = method.Name == "SaveItems"
                     ? ((IReadOnlyList<BaseItem>)args![0]!).Select(x => x.Id).ToArray()
-                    : [ (Guid)args![0]! ];
+                    : ((IReadOnlyList<Guid>)args![0]!).ToArray();
                 AuditEntries.Enqueue(new { Sequence = ++sequence, Method = method.Name,
                     AppendOnly = allowed is not null, Ids = ids, Utc = DateTime.UtcNow });
                 while (AuditEntries.Count > 2000) AuditEntries.Dequeue();
