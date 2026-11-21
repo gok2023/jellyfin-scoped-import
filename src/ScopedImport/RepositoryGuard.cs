@@ -16,12 +16,41 @@ public sealed class Services : IPluginServiceRegistrator
         services.AddSingleton<Importer>();
         var descriptor = services.Last(x => x.ServiceType == typeof(IItemRepository));
         // Fixed ABI: never replace an unknown repository or compose unknown decorators.
-        if (typeof(BaseItem).Assembly.GetName().Version?.ToString() != "10.11.11.0"
-            || descriptor.ImplementationType?.FullName != "Jellyfin.Server.Implementations.Item.BaseItemRepository") return;
+        if (typeof(BaseItem).Assembly.GetName().Version != typeof(Services).Assembly.GetReferencedAssemblies()
+                .Single(a => a.Name == "MediaBrowser.Controller").Version) return;
+#if JELLYFIN12
+        // 12.4 shares one concrete repository between query interfaces via a factory.
+        var concrete = services.LastOrDefault(x => x.ServiceType.FullName == "Jellyfin.Server.Implementations.Item.BaseItemRepository");
+        if (descriptor.ImplementationFactory is null || descriptor.Lifetime != ServiceLifetime.Singleton
+            || concrete?.ImplementationType != concrete?.ServiceType || concrete is null
+            || concrete.Lifetime != ServiceLifetime.Singleton) return;
+#else
+        if (descriptor.ImplementationType?.FullName != "Jellyfin.Server.Implementations.Item.BaseItemRepository") return;
+#endif
+#if JELLYFIN12
+        var writer = services.Last(x => x.ServiceType == typeof(IItemPersistenceService));
+        if (writer.ImplementationType?.FullName != "Jellyfin.Server.Implementations.Item.ItemPersistenceService") return;
+        services.Remove(writer);
+        services.AddSingleton<IItemPersistenceService>(provider =>
+        {
+            var proxy = DispatchProxy.Create<IItemPersistenceService, RepositoryGuard>();
+            var guard = (RepositoryGuard)(object)proxy;
+            var inner = (IItemPersistenceService)ActivatorUtilities.CreateInstance(provider, writer.ImplementationType);
+            guard.Lookup = provider.GetRequiredService<IItemRepository>();
+            if (guard.Lookup is not RepositoryGuard) return inner;
+            guard.Inner = inner;
+            return proxy;
+        });
+#endif
         services.Remove(descriptor);
         services.AddSingleton<IItemRepository>(provider =>
         {
-            var inner = (IItemRepository)ActivatorUtilities.CreateInstance(provider, descriptor.ImplementationType);
+#if JELLYFIN12
+            var inner = (IItemRepository)descriptor.ImplementationFactory!(provider);
+            if (inner.GetType() != concrete.ServiceType) return inner; // never compose an unknown decorator
+#else
+            var inner = (IItemRepository)ActivatorUtilities.CreateInstance(provider, descriptor.ImplementationType!);
+#endif
             var proxy = DispatchProxy.Create<IItemRepository, RepositoryGuard>();
             ((RepositoryGuard)(object)proxy).Inner = inner;
             return proxy;
@@ -34,7 +63,9 @@ public sealed class Services : IPluginServiceRegistrator
 // Concrete repositories instantiated by an unrelated plugin bypass this contract.
 public class RepositoryGuard : DispatchProxy
 {
-    public IItemRepository Inner { get; set; } = null!;
+    public object Inner { get; set; } = null!;
+    public IItemRepository? Lookup { get; set; }
+    private IItemRepository Repository => Inner as IItemRepository ?? Lookup ?? throw new RepositoryProtectionException("Missing query repository");
     public static readonly object SaveGate = new();
     private static readonly AsyncLocal<HashSet<Guid>?> Permitted = new();
     private static readonly AsyncLocal<bool> ReadOnly = new();
@@ -105,16 +136,16 @@ public class RepositoryGuard : DispatchProxy
         ArgumentNullException.ThrowIfNull(method);
         if (Updating.Value is { } updates)
         {
-            if (method.Name is "SaveItems" or "SaveImages")
+            if (method.Name is "SaveItems" or "SaveImages" or "SaveImagesAsync")
             {
                 lock (SaveGate)
                 {
-                    IReadOnlyList<BaseItem> targets = method.Name == "SaveImages"
+                    IReadOnlyList<BaseItem> targets = method.Name is "SaveImages" or "SaveImagesAsync"
                         ? [(BaseItem)args![0]!] : (IReadOnlyList<BaseItem>)args![0]!;
                     foreach (var item in targets)
                     {
                         if (!updates.TryGetValue(item.Id, out var identity) || identity != Identity.Of(item)
-                            || Inner.RetrieveItem(item.Id) is not { } stored || Identity.Of(stored) != identity)
+                            || Repository.RetrieveItem(item.Id) is not { } stored || Identity.Of(stored) != identity)
                             throw new RepositoryProtectionException($"{method.Name}: metadata update outside confirmed new-item identity; ItemId={item.Id}");
                     }
                     var result = Forward(method, args);
@@ -147,23 +178,23 @@ public class RepositoryGuard : DispatchProxy
                     foreach (var item in (IReadOnlyList<BaseItem>)args![0]!)
                     {
                         if (!allowed.Contains(item.Id)) throw new RepositoryProtectionException("Write outside new-item set");
-                        var conflict = Inner.RetrieveItem(item.Id) is not null;
+                        var conflict = Repository.RetrieveItem(item.Id) is not null;
                         if (!string.IsNullOrEmpty(item.Path))
-                            conflict |= Inner.GetItemList(new InternalItemsQuery { Path = item.Path, Limit = 1 }).Count != 0;
+                            conflict |= Repository.GetItemList(new InternalItemsQuery { Path = item.Path, Limit = 1 }).Count != 0;
                         if (item is Season && item.IndexNumber.HasValue)
-                            conflict |= Inner.GetItemList(new InternalItemsQuery { ParentId = item.ParentId,
+                            conflict |= Repository.GetItemList(new InternalItemsQuery { ParentId = item.ParentId,
                                 IncludeItemTypes = [Jellyfin.Data.Enums.BaseItemKind.Season], IndexNumber = item.IndexNumber, Limit = 1 }).Count != 0;
                         if (string.IsNullOrEmpty(item.Path) && item is not Season { IndexNumber: not null }) throw new RepositoryProtectionException("Pathless item is unsupported");
                         if (item is Episode && item.IndexNumber.HasValue)
-                            conflict |= Inner.GetItemList(new InternalItemsQuery { ParentId = item.ParentId,
+                            conflict |= Repository.GetItemList(new InternalItemsQuery { ParentId = item.ParentId,
                                 IncludeItemTypes = [Jellyfin.Data.Enums.BaseItemKind.Episode], IndexNumber = item.IndexNumber, Limit = 1 }).Count != 0;
                         if (conflict)
                         {
                             Interlocked.Increment(ref Conflicts);
                             throw new RepositoryProtectionException("AppendConflict: existing item was preserved");
                         }
-                        if (item is Episode newEpisode) CheckSiblingEpisodes(Inner, newEpisode);
-                        if (Inner.RetrieveItem(item.ParentId) is null) throw new RepositoryProtectionException("Parent disappeared");
+                        if (item is Episode newEpisode) CheckSiblingEpisodes(Repository, newEpisode);
+                        if (Repository.RetrieveItem(item.ParentId) is null) throw new RepositoryProtectionException("Parent disappeared");
                     }
                 }
                 var result = Forward(method, args);

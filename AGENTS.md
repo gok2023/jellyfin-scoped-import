@@ -18,7 +18,7 @@
 ## 契约与版本演进
 
 - 插件 GUID 347d2c09-78a1-4697-9c3d-e23566122144 是稳定身份；除明确授权的身份迁移，不更换 GUID。
-- 当前版本和支持的 Jellyfin ABI 以 csproj、dependencies.lock.json 和 docs/PROJECT.md 为准；当前为插件 0.2.0.3 / Jellyfin 10.11.11.0。
+- 当前版本和支持的 Jellyfin ABI 以 csproj、dependencies.lock.json 和 docs/PROJECT.md 为准；当前为插件 0.2.0.3，保留 Jellyfin 10.11.11.0 与独立 12.4.0.0 构建；12.4 依赖锁为 scripts/dependencies-jf12.lock.json。
 - 升级插件版本时同步程序集/文件/发布版本、API/页面版本标识、测试断言、CHANGELOG、README 和 PROJECT；构建/打包必须检查实际 DLL 与发布元数据一致。
 - 扩展 Jellyfin 兼容范围须核实官方依赖来源、许可、摘要、仓储实现和安全接口，并完成对应隔离验收。不得仅改 targetAbi、关闭保护或放宽校验来宣称兼容。
 - 管理员 API、共享仓储保护、已有项处理、路径/预算门禁、元数据边界是安全契约；改变它们需明确说明目的、兼容影响及验收证据。

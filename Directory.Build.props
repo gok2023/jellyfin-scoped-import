@@ -1,6 +1,10 @@
 <Project>
   <PropertyGroup>
-    <JellyfinReferenceDir>$(MSBuildThisFileDirectory).local/jellyfin/server</JellyfinReferenceDir>
+    <JellyfinVersion Condition="'$(JellyfinVersion)' == ''">10.11.11</JellyfinVersion>
+    <JellyfinFramework Condition="'$(JellyfinVersion)' == '12.4'">net10.0</JellyfinFramework>
+    <JellyfinFramework Condition="'$(JellyfinFramework)' == ''">net9.0</JellyfinFramework>
+    <JellyfinReferenceDir Condition="'$(JellyfinReferenceDir)' == ''">$(MSBuildThisFileDirectory).local/jellyfin/server</JellyfinReferenceDir>
+    <DefineConstants Condition="'$(JellyfinVersion)' == '12.4'">$(DefineConstants);JELLYFIN12</DefineConstants>
     <Deterministic>true</Deterministic>
     <PathMap>$(MSBuildThisFileDirectory)=/_/</PathMap>
     <ContinuousIntegrationBuild>true</ContinuousIntegrationBuild>

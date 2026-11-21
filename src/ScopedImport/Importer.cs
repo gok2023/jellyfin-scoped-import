@@ -43,6 +43,9 @@ internal sealed record Pending(BaseItem Item, Folder Parent, string? Nfo, string
 
 public sealed class Importer(ILibraryManager library, IItemRepository repository, IProviderManager providers,
     IMediaEncoder encoder, IMediaStreamRepository streams, Emby.Naming.Common.NamingOptions naming,
+#if JELLYFIN12
+    IItemPersistenceService persistence,
+#endif
     MediaBrowser.Controller.Configuration.IServerConfigurationManager configuration)
 {
     private readonly ConcurrentDictionary<Guid, Operation> operations = new();
@@ -89,7 +92,11 @@ public sealed class Importer(ILibraryManager library, IItemRepository repository
     {
         using var deadline = new CancellationTokenSource(TimeSpan.FromMinutes(15));
         var ct = deadline.Token;
-        if (repository is not RepositoryGuard) throw new InvalidOperationException("只追加保护未启用");
+        if (repository is not RepositoryGuard
+#if JELLYFIN12
+            || persistence is not RepositoryGuard
+#endif
+            ) throw new InvalidOperationException("只追加保护未启用");
         if (string.IsNullOrWhiteSpace(request.Path) || !Path.IsPathFullyQualified(request.Path)
             || request.Path.StartsWith(@"\\", StringComparison.Ordinal) || request.Path[2..].Contains(':')
             || request.Path.IndexOfAny(['*', '?']) >= 0) throw new IOException("请输入本机挂载盘上的完整路径");
@@ -455,7 +462,11 @@ public sealed class Importer(ILibraryManager library, IItemRepository repository
             if (item is Season s) s.SeriesPresentationUniqueKey = key;
             if (item is Episode e) e.SeriesPresentationUniqueKey = key;
             item.PresentationUniqueKey = item.CreatePresentationUniqueKey();
+#if JELLYFIN12
+            persistence.SaveItems([item], ct);
+#else
             repository.SaveItems([item], ct);
+#endif
         }
     }
 

@@ -14,7 +14,7 @@ namespace ScopedImport;
 public sealed class Plugin(IApplicationPaths paths, IXmlSerializer serializer)
     : BasePlugin<BasePluginConfiguration>(paths, serializer), IHasWebPages
 {
-    public override string Name => "定向入库 Scoped Import";
+    public override string Name => "Scoped Import";
     public override Guid Id => new("347d2c09-78a1-4697-9c3d-e23566122144");
     public override string Description => "按路径追加缺失电影和剧集，不使用媒体库扫描或祖先刷新。";
     public IEnumerable<PluginPageInfo> GetPages() => [new() { Name = "ScopedImport", DisplayName = "定向入库",
@@ -27,13 +27,22 @@ public sealed record ImportRequest(string Path, Guid? LibraryId = null, bool? Fe
 }
 
 [ApiController, Route("ScopedImport"), Authorize(Policy = Policies.RequiresElevation)]
-public sealed class Controller(Importer importer, ILibraryManager library, IItemRepository repository) : ControllerBase
+public sealed class Controller(Importer importer, ILibraryManager library, IItemRepository repository
+#if JELLYFIN12
+    , IItemPersistenceService persistence
+#endif
+    ) : ControllerBase
 {
+    private bool Ready => repository is RepositoryGuard
+#if JELLYFIN12
+        && persistence is RepositoryGuard
+#endif
+        ;
     [AllowAnonymous, HttpGet("App")]
     public IActionResult App() => File(typeof(Plugin).Assembly.GetManifestResourceStream("ScopedImport.app.html")!, "text/html; charset=utf-8");
 
     [HttpGet("Libraries")]
-    public IActionResult Libraries() => Ok(new { Ready = repository is RepositoryGuard,
+    public IActionResult Libraries() => Ok(new { Ready,
         Version = "0.2.0.3", Libraries = library.GetVirtualFolders().Select(x => new { x.ItemId, x.Name, x.Locations, x.CollectionType }) });
 
     [HttpPost("PickFolder"), ResponseCache(NoStore = true, Location = ResponseCacheLocation.None)]
@@ -68,7 +77,7 @@ public sealed class Controller(Importer importer, ILibraryManager library, IItem
     [HttpPost("Import")]
     public IActionResult Import([FromBody] ImportRequest request)
     {
-        if (repository is not RepositoryGuard) return StatusCode(503, new { Message = "只追加保护未启用；仅支持原版 Jellyfin 10.11.11。" });
+        if (!Ready) return StatusCode(503, new { Message = "只追加保护未启用；请使用与当前 Jellyfin 版本匹配的构建及原版仓储服务。" });
         try { return Accepted(importer.Start(request)); }
         catch (InvalidOperationException ex) { return Conflict(new { Message = ex.Message }); }
     }

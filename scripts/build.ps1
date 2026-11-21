@@ -32,7 +32,7 @@ try {
     $stage = Assert-ProjectPath (Join-Path $run ('ScopedImport_' + $version))
     New-Item -ItemType Directory -Path $stage | Out-Null
     Copy-Item -LiteralPath $dll -Destination (Join-Path $stage 'ScopedImport.dll')
-    $meta = @{name='定向入库 Scoped Import';guid=$pluginGuid;version=$version;targetAbi=$Lock.jellyfin.abi;
+    $meta = @{name='Scoped Import';guid=$pluginGuid;version=$version;targetAbi=$Lock.jellyfin.abi;
         status='Active';autoUpdate=$false;assemblies=@('ScopedImport.dll');description='按路径追加缺失电影与剧集。'}
     $meta | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $stage 'meta.json') -Encoding utf8
     Add-Type -AssemblyName System.IO.Compression.FileSystem

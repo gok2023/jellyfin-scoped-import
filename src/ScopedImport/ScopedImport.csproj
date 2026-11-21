@@ -1,6 +1,6 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <TargetFramework>net9.0</TargetFramework>
+    <TargetFramework>$(JellyfinFramework)</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <AssemblyVersion>0.2.0.3</AssemblyVersion>
@@ -23,6 +23,6 @@
     <EmbeddedResource Include="app.html" LogicalName="ScopedImport.app.html" />
   </ItemGroup>
   <Target Name="RequireLockedReferences" BeforeTargets="ResolveAssemblyReferences">
-    <Error Condition="!Exists('$(JellyfinReferenceDir)/MediaBrowser.Controller.dll')" Text="Run scripts/bootstrap.ps1 to acquire locked Jellyfin 10.11.11 references." />
+    <Error Condition="!Exists('$(JellyfinReferenceDir)/MediaBrowser.Controller.dll')" Text="Run scripts/bootstrap.ps1 to acquire locked Jellyfin $(JellyfinVersion) references." />
   </Target>
 </Project>

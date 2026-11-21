@@ -1,0 +1,55 @@
+{
+  "schema": 1,
+  "sdk": {
+    "version": "10.0.404",
+    "url": "https://builds.dotnet.microsoft.com/dotnet/Sdk/10.0.404/dotnet-sdk-10.0.404-win-x64.zip",
+    "sha512": "330ddd2665b43cd2e428216a0d8ea1ac7bb19b5434fdc530e62010dc3b52823a620bf95489d628e1ed6f5122401793ee4887cca4a019122361a1231497f632ee",
+    "checksumSource": "https://builds.dotnet.microsoft.com/dotnet/release-metadata/10.0/releases.json"
+  },
+  "jellyfin": {
+    "version": "12.4",
+    "abi": "12.4.0.0",
+    "url": "https://repo.jellyfin.org/files/server/windows/stable/v12.4/amd64/jellyfin_12.4-amd64.zip",
+    "sha256": "d62b5b30390213680fd1fae5484082ae27b2a778cfd40a473ad7b1e4147d75a6",
+    "sha256Source": "Previously verified official archive used for production upgrade (2026-11-21); not an upstream signature",
+    "references": {
+      "Emby.Naming.dll": {
+        "assemblyVersion": "12.4.0.0",
+        "sha256": "26d25db11a01c26f7c74320431ceeb0b453e2ed344c8c3a086a4fa9ab14f8e18",
+        "license": "GPL-3.0-only"
+      },
+      "Jellyfin.Data.dll": {
+        "assemblyVersion": "12.4.0.0",
+        "sha256": "b50048f31306982c3be23696ebd50205dfafaf5c74ed0f409d34b6d379a03cbf",
+        "license": "GPL-3.0-only"
+      },
+      "MediaBrowser.Common.dll": {
+        "assemblyVersion": "12.4.0.0",
+        "sha256": "bc67f246c750cf1b106b5dd1cb283273a5485ec77ddc3121e64baf30943edf09",
+        "license": "GPL-3.0-only"
+      },
+      "MediaBrowser.Controller.dll": {
+        "assemblyVersion": "12.4.0.0",
+        "sha256": "ee148a49831f97c5dea8d3e96a6920c2cc7bc11ca9508fb9f437cd02ad978985",
+        "license": "GPL-3.0-only"
+      },
+      "MediaBrowser.Model.dll": {
+        "assemblyVersion": "12.4.0.0",
+        "sha256": "720cbe8663baaab85de7ee91e2c868f464ddca547696a60a2a76b279087194ee",
+        "license": "GPL-3.0-only"
+      },
+      "Jellyfin.Extensions.dll": {
+        "assemblyVersion": "12.4.0.0",
+        "sha256": "231667d8ebca345ce84c0f53316cd2237f80c5296bd358cda9b687adb0cea994",
+        "license": "GPL-3.0-only"
+      }
+    },
+    "testRuntimeReferences": {
+      "Jellyfin.Database.Implementations.dll": {
+        "assemblyVersion": "12.4.0.0",
+        "sha256": "238bffa62e4a6312808a2566c87edc0cfb92352fe5548135b6f53d8b6176c4aa",
+        "license": "GPL-3.0-only"
+      }
+    }
+  }
+}
